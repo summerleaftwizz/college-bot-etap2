@@ -178,6 +178,16 @@ def _state_block(state: State, bells) -> list[str]:
     return []
 
 
+def _room_text(room) -> str:
+    """Текст аудитории: 'max' -> «пара в максе», иначе «каб. X»."""
+    r = (room or "").strip()
+    if not r:
+        return ""
+    if r.lower() == "max":
+        return "пара в максе"
+    return f"каб. {esc(r)}"
+
+
 def _render_lessons(entries, bells, empty_text: str) -> str:
     by_num = {e.lesson_number: e for e in entries}
     nums = sorted(by_num)
@@ -185,35 +195,31 @@ def _render_lessons(entries, bells, empty_text: str) -> str:
     if not active_nums:
         return f"<i>{esc(empty_text)}</i>"
 
-    first, last = active_nums[0], active_nums[-1]
+    # показываем от первой записи в расписании до последней непустой пары
+    first, last = nums[0], active_nums[-1]
     blocks: list[str] = []
-
-    # пустые пары в начале дня сворачиваем в одну строку
-    leading = [n for n in nums if n < first]
-    if leading:
-        if len(leading) == 1:
-            blocks.append(f"<i>{leading[0]} пара — нет</i>")
-        else:
-            blocks.append(f"<i>{leading[0]}–{leading[-1]} пара — нет</i>")
 
     for n in range(first, last + 1):
         entry = by_num.get(n)
-        if entry is None:
+        if entry is None or not (entry.subject or "").strip():
+            blocks.append(f"{_emoji_num(n)} <i>пара — окно</i>")
             continue
         b = bells.get(n)
         time_part = ""
         if settings.SHOW_TIME and b:
             time_part = f" <b>{esc(b[0])} – {esc(b[1])}</b>"
-        if not (entry.subject or "").strip():
-            blocks.append("⏳ <i>Окно</i>")
-            continue
         lines = [f"{_emoji_num(n)}{time_part}"]
         lines.append(f"📚 {esc(entry.subject)}")
-        if entry.room:
-            lines.append(f"🚪 каб. {esc(entry.room)}")
+        below: list[str] = []
+        room_text = _room_text(entry.room)
+        if room_text:
+            below.append(f"🚪 {room_text}")
         teacher = getattr(entry, "teacher", None)
         if teacher:
-            lines.append(f"👤 {esc(teacher)}")
+            below.append(f"👤 {esc(teacher)}")
+        if below:
+            lines.append("—————")
+            lines.extend(below)
         blocks.append("\n".join(lines))
 
     return "\n\n".join(blocks)
@@ -279,6 +285,53 @@ def format_notification(
     lines.append("")
     lines.append(_render_lessons(entries, bells, "Пар нет 🎉"))
     return "\n".join(lines)
+
+
+def format_what_now(
+    date_label: str, group: str, entries, *, now: Optional[datetime] = None
+) -> str:
+    """Короткий ответ на «Что сейчас»: состояние дня в 1–2 строки.
+
+    minutes_left считаем только когда известны минуты (state.until = HH:MM).
+    """
+    ref = now or _now()
+    weekday = _weekday_of(date_label, ref)
+    bells = bells_for_weekday(weekday)
+    state = get_current_state(entries, ref)
+
+    def _room(lesson) -> str:
+        t = _room_text(getattr(lesson, "room", ""))
+        return f", {t}" if t else ""
+
+    if state.kind == "empty":
+        return "💤 На этот день пар нет."
+
+    if state.kind == "ongoing":
+        c = state.current
+        return (
+            f"⏱️ <b>Сейчас:</b> {c.lesson_number} пара — {esc(c.subject)}{_room(c)}\n"
+            f"⏳ До конца {state.minutes_left} мин (до {esc(state.until)})"
+        )
+
+    if state.kind in ("break", "window"):
+        nxt = state.next_lesson
+        word = "Перемена" if state.kind == "break" else "Окно"
+        return (
+            f"☕ <b>{word}</b> — ещё {state.minutes_left} мин (до {esc(state.until)})\n"
+            f"➡️ Дальше: {nxt.lesson_number} пара — {esc(nxt.subject)}{_room(nxt)}"
+        )
+
+    if state.kind == "before":
+        nxt = state.next_lesson
+        start = bells.get(nxt.lesson_number, ("—", ""))[0]
+        return (
+            f"🌅 Занятия начнутся в {esc(state.until)} (через {state.minutes_left} мин)\n"
+            f"➡️ Первая: {nxt.lesson_number} пара — {esc(nxt.subject)}{_room(nxt)}"
+        )
+
+    # after
+    c = state.current
+    return f"✅ Пары на сегодня закончились (последняя — {c.lesson_number}, {esc(c.subject)})"
 
 
 def split_message(text: str, limit: int = 4096) -> list[str]:

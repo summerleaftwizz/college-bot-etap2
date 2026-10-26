@@ -7,6 +7,7 @@ from services.formatting import (
     get_current_state,
     format_notification,
     format_schedule,
+    format_what_now,
     split_message,
 )
 
@@ -113,14 +114,34 @@ def test_format_today_with_state_tomorrow_without():
     assert "Сейчас:" not in text_tomorrow
 
 
-def test_format_leading_empty_collapsed():
+def test_format_empty_pairs_shown_with_emoji():
     text = format_schedule(
         "26.10", "ГР-1",
         [entry(1, subject=""), entry(2, subject=""), entry(3)],
         now=datetime(2026, 10, 26, 12, 0),
     )
-    assert "1–2 пара — нет" in text
+    assert "1️⃣ <i>пара — окно</i>" in text
+    assert "2️⃣ <i>пара — окно</i>" in text
     assert "3️⃣" in text
+    assert "— нет" not in text
+    assert "⏳" not in text
+
+
+def test_format_max_room():
+    text = format_schedule("26.10", "ГР-1", [entry(1, room="max", teacher="Иванов И. И.")],
+                           now=datetime(2026, 10, 26, 12, 0))
+    assert "🚪 пара в максе" in text
+    assert "каб. max" not in text
+
+
+def test_format_dash_separator():
+    text = format_schedule("26.10", "ГР-1", [entry(1, room="304", teacher="Иванов И. И.")],
+                           now=datetime(2026, 10, 26, 12, 0))
+    assert "📚 Предмет\n—————\n🚪 каб. 304\n👤 Иванов И. И." in text
+    # без кабинета и ФИО тире не рисуем
+    text = format_schedule("26.10", "ГР-1", [entry(2, room="", teacher="")],
+                           now=datetime(2026, 10, 26, 12, 0))
+    assert "—————" not in text
 
 
 def test_notification_has_start_line_not_state():
@@ -128,6 +149,34 @@ def test_notification_has_start_line_not_state():
     text = format_notification("26.10", "ГР-1", entries, now=datetime(2026, 10, 26, 9, 0))
     assert "Начало занятий в 08:30, всего 2 пар" in text
     assert "Сейчас:" not in text
+
+
+def test_what_now_states():
+    # ongoing: 9:00 пн, 1 пара идёт
+    text = format_what_now("26.10", "ГР-1", [entry(1), entry(2)],
+                           now=datetime(2026, 10, 26, 9, 0))
+    assert "Сейчас:</b> 1 пара" in text and "До конца 60 мин" in text
+    # break: 10:05
+    text = format_what_now("26.10", "ГР-1", [entry(1), entry(2)],
+                           now=datetime(2026, 10, 26, 10, 5))
+    assert "Перемена" in text and "Дальше: 2 пара" in text
+    # before: 07:30
+    text = format_what_now("26.10", "ГР-1", [entry(1)],
+                           now=datetime(2026, 10, 26, 7, 30))
+    assert "Занятия начнутся в 08:30" in text
+    # after: 20:00
+    text = format_what_now("26.10", "ГР-1", [entry(1)],
+                           now=datetime(2026, 10, 26, 20, 0))
+    assert "закончились" in text
+    # empty
+    text = format_what_now("26.10", "ГР-1", [], now=datetime(2026, 10, 26, 12, 0))
+    assert "пар нет" in text
+
+
+def test_what_now_max_room():
+    text = format_what_now("26.10", "ГР-1", [entry(1, room="max", teacher="")],
+                           now=datetime(2026, 10, 26, 9, 0))
+    assert "Сейчас:</b> 1 пара — Предмет, пара в максе" in text
 
 
 def test_split_message_long():
