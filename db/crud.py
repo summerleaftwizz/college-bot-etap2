@@ -55,6 +55,35 @@ async def list_subscribed_users(session: AsyncSession) -> list[models.User]:
     return list(res.scalars())
 
 
+# ------------------------------------------------------------ favorites ---
+
+FAVORITE_SLOTS = (1, 2, 3)
+
+
+def _fav_attr(slot: int) -> str:
+    if slot not in FAVORITE_SLOTS:
+        raise ValueError(f"недопустимый слот избранного: {slot}")
+    return f"favorite_{slot}"
+
+
+async def get_favorites(session: AsyncSession, telegram_id: int) -> dict[int, Optional[str]]:
+    """Возвращает {1: группа|None, 2: ..., 3: ...}."""
+    user = await get_user(session, telegram_id)
+    if user is None:
+        return {slot: None for slot in FAVORITE_SLOTS}
+    return {slot: getattr(user, _fav_attr(slot), None) for slot in FAVORITE_SLOTS}
+
+
+async def set_favorite(session: AsyncSession, telegram_id: int, slot: int, group: str) -> None:
+    user = await get_or_create_user(session, telegram_id)
+    setattr(user, _fav_attr(slot), group)
+
+
+async def clear_favorite(session: AsyncSession, telegram_id: int, slot: int) -> None:
+    user = await get_or_create_user(session, telegram_id)
+    setattr(user, _fav_attr(slot), None)
+
+
 # ------------------------------------------------------------- schedule ---
 
 async def get_groups(session: AsyncSession) -> list[str]:

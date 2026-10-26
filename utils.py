@@ -61,3 +61,10 @@ def parse_folder_date(name: str) -> Optional[date]:
 def looks_like_date(name: str) -> bool:
     return parse_folder_date(name) is not None
 
+
+def week_days() -> list[tuple[str, str]]:
+    """Пн..Сб текущей недели: [(название дня, 'DD.MM'), ...]."""
+    today = now().date()
+    monday = today - timedelta(days=today.weekday())
+    return [(WEEKDAY_NAMES[i], ddmm(monday + timedelta(days=i))) for i in range(6)]
+

@@ -17,6 +17,9 @@ class User(Base):
     group: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     subscribed: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
     inactive: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    favorite_1: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    favorite_2: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    favorite_3: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

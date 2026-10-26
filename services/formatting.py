@@ -334,6 +334,28 @@ def format_what_now(
     return f"✅ Пары на сегодня закончились (последняя — {c.lesson_number}, {esc(c.subject)})"
 
 
+def format_profile(username: Optional[str], group: Optional[str], subscribed: bool) -> str:
+    """Карточка профиля пользователя."""
+    uname = f"@{esc(username)}" if username else "—"
+    status = "включены 🔔" if subscribed else "выключены 🔕"
+    return (
+        "👤 <b>Профиль</b>\n\n"
+        f"🆔 {uname}\n"
+        "🎓 Роль: Студент\n"
+        f"👥 Уч. группа: <b>{esc(group) if group else '—'}</b>\n"
+        f"🔔 Уведомления: {status}"
+    )
+
+
+def format_favorites(favorites: dict) -> str:
+    """Список избранных групп: слоты 1..3, пустой слот — «отсутствует»."""
+    lines = ["❤️ Это — ваши избранные группы:", ""]
+    for slot in (1, 2, 3):
+        group = favorites.get(slot)
+        lines.append(f"{slot}. {esc(group) if group else 'отсутствует'}")
+    return "\n".join(lines)
+
+
 def split_message(text: str, limit: int = 4096) -> list[str]:
     """Разбивает длинный HTML-текст на части по пустым строкам (не обрезая)."""
     if len(text) <= limit:

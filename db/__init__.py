@@ -35,6 +35,8 @@ def _migrate_schema(sync_conn) -> None:
     """Применяет безопасные миграции схемы при старте (без потери данных)."""
     _fix_users_id_sqlite(sync_conn)
     _add_column_if_missing(sync_conn, "schedule_entries", "teacher", "VARCHAR(255)")
+    for slot in (1, 2, 3):
+        _add_column_if_missing(sync_conn, "users", f"favorite_{slot}", "VARCHAR(255)")
 
 
 def _fix_users_id_sqlite(sync_conn) -> None:
