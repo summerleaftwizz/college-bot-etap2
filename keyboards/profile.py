@@ -1,4 +1,4 @@
-"""Клавиатуры профиля, долгов, дедлайнов, настроек и поддержки."""
+"""Клавиатуры профиля, долгов, напоминаний, настроек и поддержки."""
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from db.crud import FAVORITE_SLOTS
@@ -11,7 +11,7 @@ def build_profile_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="⭐ Избранные", callback_data="fav:list")],
             [
                 InlineKeyboardButton(text="📝 Мои долги", callback_data="debt:list"),
-                InlineKeyboardButton(text="⏰ Дедлайны", callback_data="dl:list"),
+                InlineKeyboardButton(text="⏰ Напоминания", callback_data="dl:list"),
             ],
             [InlineKeyboardButton(text="⚙️ Настройки", callback_data="prof:settings")],
         ]
@@ -60,17 +60,20 @@ def build_debts_keyboard(debts) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def build_deadlines_keyboard(deadlines) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text="➕ Добавить дедлайн", callback_data="dl:add")]]
+def build_reminders_keyboard(deadlines) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text="➕ Добавить напоминание", callback_data="dl:add")]]
     rows.append([InlineKeyboardButton(text="⬅️ Назад в профиль", callback_data="prof:back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def build_settings_keyboard(subscribed: bool) -> InlineKeyboardMarkup:
-    toggle = "🔔 Уведомления: включены" if subscribed else "🔕 Уведомления: выключены"
+def build_settings_keyboard(subscribed: bool, auto_delete: bool) -> InlineKeyboardMarkup:
+    notify = "🔔 Уведомления: включены" if subscribed else "🔕 Уведомления: выключены"
+    auto = "⏱ Автоудаление: Вкл" if auto_delete else "⏱ Автоудаление: Выкл"
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=toggle, callback_data="set:notify")],
+            [InlineKeyboardButton(text=notify, callback_data="set:notify")],
+            [InlineKeyboardButton(text=auto, callback_data="set:autodel")],
+            [InlineKeyboardButton(text="🗑 Очистить чат", callback_data="set:clearchat")],
             [InlineKeyboardButton(text="🤫 Секретный гайд", callback_data="set:guide")],
             [InlineKeyboardButton(text="⬅️ Назад в профиль", callback_data="prof:back")],
         ]

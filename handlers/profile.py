@@ -1,4 +1,4 @@
-"""Профиль, избранные группы, долги, дедлайны, настройки и поддержка."""
+"""Профиль, избранные группы, долги, напоминания, настройки и поддержка."""
 import html
 from datetime import datetime
 
@@ -11,17 +11,18 @@ from aiogram.types import CallbackQuery, Message
 from config import settings
 from db import SessionLocal
 from db import crud
+from handlers import menu_dispatch
 from keyboards.groups import build_groups_keyboard
 from keyboards.profile import (
-    build_deadlines_keyboard,
     build_debts_keyboard,
     build_favorites_keyboard,
     build_profile_keyboard,
+    build_reminders_keyboard,
     build_settings_keyboard,
     build_slot_keyboard,
     build_support_keyboard,
 )
-from services import formatting
+from services import chatlog, formatting
 from utils import now, parse_due_datetime
 
 router = Router()
@@ -50,8 +51,7 @@ GUIDE_TEXT = (
     "• DeepSeek Harness — почти такой же как Claude, дается пробный 1 доллар (VPN не требует).\n\n"
     "📝 <b>Тексты, сочинения, эссе:</b>\n"
     "• ChatGPT — универсал. Хорошо пишет тексты, но требует VPN.\n"
-    "• Gemini — неплохо пишет на русском, работает через Google-аккаунт. "
-    "Пишите @x6anax6, дам DNS, чтоб работал без VPN.\n\n"
+    "• Gemini — неплохо пишет на русском, работает через Google-аккаунт.\n\n"
     "📊 <b>Математика и анализ данных:</b>\n"
     "• DeepSeek — отлично решает задачи по математике и статистике.\n"
     "• Qwen — хорошо справляется с формулами и таблицами.\n\n"
@@ -99,9 +99,29 @@ async def _favorites_text(telegram_id: int) -> str:
     return formatting.format_favorites(favorites)
 
 
+async def _answer_tracked(
+    message: Message,
+    text: str,
+    *,
+    reply_markup=None,
+    parse_mode: str = "HTML",
+    telegram_id: int | None = None,
+) -> None:
+    """Ответ с автоудалением предыдущих сообщений (если включено) и трекингом.
+
+    telegram_id передаём явно: у callback.message.from_user — это сам бот.
+    """
+    uid = telegram_id if telegram_id is not None else message.from_user.id
+    await chatlog.auto_clean(message.chat.id, uid, message.bot)
+    sent = await message.answer(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    await chatlog.track(message.chat.id, sent)
+
+
 async def _refresh_profile(message: Message, telegram_id: int, username: str | None) -> None:
     text = await _profile_text(telegram_id, username)
-    await message.answer(text, reply_markup=build_profile_keyboard())
+    await _answer_tracked(
+        message, text, reply_markup=build_profile_keyboard(), telegram_id=telegram_id
+    )
 
 
 async def _send_debts(message: Message, telegram_id: int) -> None:
@@ -110,29 +130,43 @@ async def _send_debts(message: Message, telegram_id: int) -> None:
 
     if not debts:
         text = "📝 <b>Мои долги</b>\n\nДолгов нет 🎉"
-        await message.answer(text, reply_markup=build_debts_keyboard([]))
+        await _answer_tracked(
+            message, text, reply_markup=build_debts_keyboard([]), telegram_id=telegram_id
+        )
         return
 
     lines = ["📝 <b>Мои долги</b>\n"]
     for i, d in enumerate(debts, 1):
         lines.append(f"{i}. {_esc(d.text)}")
-    await message.answer("\n".join(lines), reply_markup=build_debts_keyboard(debts))
+    await _answer_tracked(
+        message,
+        "\n".join(lines),
+        reply_markup=build_debts_keyboard(debts),
+        telegram_id=telegram_id,
+    )
 
 
-async def _send_deadlines(message: Message, telegram_id: int) -> None:
+async def _send_reminders(message: Message, telegram_id: int) -> None:
     async with SessionLocal() as session:
         deadlines = await crud.list_deadlines(session, telegram_id)
 
     if not deadlines:
-        text = "⏰ <b>Дедлайны</b>\n\nАктивных дедлайнов нет."
-        await message.answer(text, reply_markup=build_deadlines_keyboard([]))
+        text = "⏰ <b>Напоминания</b>\n\nАктивных напоминаний нет."
+        await _answer_tracked(
+            message, text, reply_markup=build_reminders_keyboard([]), telegram_id=telegram_id
+        )
         return
 
-    lines = ["⏰ <b>Мои дедлайны</b>\n"]
+    lines = ["⏰ <b>Мои напоминания</b>\n"]
     for i, d in enumerate(deadlines, 1):
         when = datetime.fromtimestamp(d.due_ts, tz=now().tzinfo).strftime("%d.%m.%Y %H:%M")
         lines.append(f"{i}. {when} — {_esc(d.text)}")
-    await message.answer("\n".join(lines), reply_markup=build_deadlines_keyboard(deadlines))
+    await _answer_tracked(
+        message,
+        "\n".join(lines),
+        reply_markup=build_reminders_keyboard(deadlines),
+        telegram_id=telegram_id,
+    )
 
 
 # --- кнопки главного меню --------------------------------------------------
@@ -170,6 +204,8 @@ async def cb_sup_report(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(ProfileStates.support_report)
 async def on_support_report(message: Message, state: FSMContext, bot) -> None:
+    if await menu_dispatch.cancel_fsm_on_menu(message, state):
+        return
     text = (message.text or "").strip()
     await state.clear()
     if not text:
@@ -219,13 +255,25 @@ async def cb_profile_settings(callback: CallbackQuery) -> None:
             session, callback.from_user.id, username=callback.from_user.username
         )
         subscribed = user.subscribed
+        auto_delete = user.auto_delete
         await session.commit()
 
-    word = "включены 🔔" if subscribed else "выключены 🔕"
     await callback.answer()
-    await callback.message.answer(
-        f"⚙️ <b>Настройки</b>\n\n🔔 Уведомления о расписании: {word}",
-        reply_markup=build_settings_keyboard(subscribed),
+    await _answer_tracked(
+        callback.message,
+        _settings_text(subscribed, auto_delete),
+        reply_markup=build_settings_keyboard(subscribed, auto_delete),
+        telegram_id=callback.from_user.id,
+    )
+
+
+def _settings_text(subscribed: bool, auto_delete: bool) -> str:
+    notify = "включены 🔔" if subscribed else "выключены 🔕"
+    auto = "вкл" if auto_delete else "выкл"
+    return (
+        "⚙️ <b>Настройки</b>\n\n"
+        f"🔔 Уведомления о расписании: {notify}\n"
+        f"⏱ Автоудаление сообщений: {auto}"
     )
 
 
@@ -237,20 +285,57 @@ async def cb_set_notify(callback: CallbackQuery) -> None:
         )
         user.subscribed = not user.subscribed
         subscribed = user.subscribed
+        auto_delete = user.auto_delete
         await session.commit()
 
-    word = "включены 🔔" if subscribed else "выключены 🔕"
     await callback.answer()
-    await callback.message.answer(
-        f"⚙️ <b>Настройки</b>\n\n🔔 Уведомления о расписании: {word}",
-        reply_markup=build_settings_keyboard(subscribed),
+    await _answer_tracked(
+        callback.message,
+        _settings_text(subscribed, auto_delete),
+        reply_markup=build_settings_keyboard(subscribed, auto_delete),
+        telegram_id=callback.from_user.id,
     )
+
+
+@router.callback_query(F.data == "set:autodel")
+async def cb_set_autodel(callback: CallbackQuery) -> None:
+    async with SessionLocal() as session:
+        user = await crud.get_or_create_user(
+            session, callback.from_user.id, username=callback.from_user.username
+        )
+        user.auto_delete = not user.auto_delete
+        auto_delete = user.auto_delete
+        subscribed = user.subscribed
+        await session.commit()
+
+    word = "включено" if auto_delete else "выключено"
+    await callback.answer(f"Автоудаление: {word}")
+    await _answer_tracked(
+        callback.message,
+        _settings_text(subscribed, auto_delete),
+        reply_markup=build_settings_keyboard(subscribed, auto_delete),
+        telegram_id=callback.from_user.id,
+    )
+
+
+@router.callback_query(F.data == "set:clearchat")
+async def cb_set_clearchat(callback: CallbackQuery) -> None:
+    ok, fail = await chatlog.clear_chat(callback.message.bot, callback.message.chat.id, 20)
+    await callback.answer()
+    if ok and not fail:
+        text = f"🗑 Очищено последних {ok} сообщений."
+    elif fail:
+        text = "Часть сообщений не удалось удалить (старше 48 часов). Удалите вручную свайпом."
+    else:
+        text = "Не нашёл своих сообщений для удаления."
+    sent = await callback.message.answer(text)
+    await chatlog.track(callback.message.chat.id, sent)
 
 
 @router.callback_query(F.data == "set:guide")
 async def cb_set_guide(callback: CallbackQuery) -> None:
     await callback.answer()
-    await callback.message.answer(GUIDE_TEXT)
+    await _answer_tracked(callback.message, GUIDE_TEXT, telegram_id=callback.from_user.id)
 
 
 # --- избранные --------------------------------------------------------------
@@ -364,6 +449,8 @@ async def cb_debt_add(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(ProfileStates.debt_text)
 async def on_debt_text(message: Message, state: FSMContext) -> None:
+    if await menu_dispatch.cancel_fsm_on_menu(message, state):
+        return
     text = (message.text or "").strip()
     await state.clear()
     if not text:
@@ -374,7 +461,7 @@ async def on_debt_text(message: Message, state: FSMContext) -> None:
         await crud.add_debt(session, message.from_user.id, text[:512])
         await session.commit()
 
-    await message.answer(f"✅ Долг добавлен: {_esc(text)}")
+    await _answer_tracked(message, f"✅ Долг добавлен: {_esc(text)}")
     await _send_debts(message, message.from_user.id)
 
 
@@ -402,13 +489,13 @@ async def cb_debt_del(callback: CallbackQuery) -> None:
     await _send_debts(callback.message, callback.from_user.id)
 
 
-# --- дедлайны ---------------------------------------------------------------
+# --- напоминания -----------------------------------------------------------
 
 
 @router.callback_query(F.data == "dl:list")
 async def cb_dl_list(callback: CallbackQuery) -> None:
     await callback.answer()
-    await _send_deadlines(callback.message, callback.from_user.id)
+    await _send_reminders(callback.message, callback.from_user.id)
 
 
 @router.callback_query(F.data == "dl:add")
@@ -420,18 +507,24 @@ async def cb_dl_add(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(ProfileStates.deadline_text)
 async def on_dl_text(message: Message, state: FSMContext) -> None:
+    if await menu_dispatch.cancel_fsm_on_menu(message, state):
+        return
     text = (message.text or "").strip()
     if not text:
         await state.clear()
-        await message.answer("Пустой текст — дедлайн не добавлен.")
+        await message.answer("Пустой текст — напоминание не добавлено.")
         return
     await state.update_data(dl_text=text[:512])
     await state.set_state(ProfileStates.deadline_when)
-    await message.answer("Когда дедлайн? Формат: <code>31.10.2026 18:00</code> (или <code>31.10 18:00</code>)")
+    await message.answer(
+        "Когда напоминание? Формат: <code>31.10.2026 18:00</code> (или <code>31.10 18:00</code>)"
+    )
 
 
 @router.message(ProfileStates.deadline_when)
 async def on_dl_when(message: Message, state: FSMContext) -> None:
+    if await menu_dispatch.cancel_fsm_on_menu(message, state):
+        return
     raw = (message.text or "").strip()
     due = parse_due_datetime(raw)
     if due is None:
@@ -449,5 +542,7 @@ async def on_dl_when(message: Message, state: FSMContext) -> None:
         await session.commit()
 
     when = due.strftime("%d.%m.%Y %H:%M")
-    await message.answer(f"⏰ Дедлайн добавлен: {when} — {_esc(text)}\nНапомню ровно в это время.")
-    await _send_deadlines(message, message.from_user.id)
+    await message.answer(
+        f"⏰ Напоминание добавлено: {when} — {_esc(text)}\nНапомню ровно в это время."
+    )
+    await _send_reminders(message, message.from_user.id)

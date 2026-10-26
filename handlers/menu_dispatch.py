@@ -1,0 +1,60 @@
+"""Диспетчер кнопок главного меню для отмены FSM-состояний.
+
+Когда пользователь в состоянии ожидания ввода (добавление долга/напоминания,
+жалоба, рассылка) нажимает кнопку Reply-клавиатуры, бот должен:
+1) очистить состояние (state.clear()),
+2) выполнить действие нажатой кнопки,
+3) написать «Действие отменено».
+"""
+from aiogram.fsm.context import FSMContext
+from aiogram.types import Message
+
+from keyboards.menu import (
+    BTN_NOW,
+    BTN_PROFILE,
+    BTN_SCHEDULE,
+    BTN_SUPPORT,
+    BTN_TODAY,
+    BTN_TOMORROW,
+    MENU_BUTTONS,
+)
+
+
+async def dispatch_menu_button(message: Message) -> None:
+    """Выполняет действие кнопки главного меню по её тексту."""
+    text = message.text or ""
+    if text == BTN_SCHEDULE:
+        from handlers import schedule as schedule_handlers
+
+        await schedule_handlers.btn_schedule(message)
+    elif text == BTN_TODAY:
+        from handlers import schedule as schedule_handlers
+
+        await schedule_handlers.btn_today(message, message.bot)
+    elif text == BTN_TOMORROW:
+        from handlers import schedule as schedule_handlers
+
+        await schedule_handlers.btn_tomorrow(message, message.bot)
+    elif text == BTN_NOW:
+        from handlers import schedule as schedule_handlers
+
+        await schedule_handlers.btn_now(message, message.bot)
+    elif text == BTN_PROFILE:
+        from handlers import profile as profile_handlers
+
+        await profile_handlers.btn_profile(message)
+    elif text == BTN_SUPPORT:
+        from handlers import profile as profile_handlers
+
+        await profile_handlers.btn_support(message)
+
+
+async def cancel_fsm_on_menu(message: Message, state: FSMContext) -> bool:
+    """Если текст сообщения — кнопка главного меню: отменяет FSM, выполняет
+    действие кнопки и пишет «Действие отменено». Возвращает True, если так."""
+    if not message.text or message.text not in MENU_BUTTONS:
+        return False
+    await state.clear()
+    await message.answer("Действие отменено.")
+    await dispatch_menu_button(message)
+    return True

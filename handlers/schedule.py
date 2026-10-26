@@ -14,7 +14,7 @@ from keyboards.menu import (
     BTN_TOMORROW,
     build_main_menu,
 )
-from services import formatting, watcher
+from services import chatlog, formatting, watcher
 from utils import now, today_ddmm, tomorrow_ddmm, week_days
 
 logger = logging.getLogger(__name__)
@@ -49,12 +49,14 @@ async def _load(date: str, group: str):
 
 
 async def _send(message: Message, text: str, *, menu: bool = False) -> None:
+    await chatlog.auto_clean(message.chat.id, message.from_user.id, message.bot)
     for chunk in formatting.split_message(text):
-        await message.answer(
+        sent = await message.answer(
             chunk,
             parse_mode="HTML",
             reply_markup=build_main_menu() if menu else None,
         )
+        await chatlog.track(message.chat.id, sent)
 
 
 async def _force_load_if_empty(label: str, group: str, bot: Bot):
@@ -68,33 +70,50 @@ async def _force_load_if_empty(label: str, group: str, bot: Bot):
     return entries
 
 
+async def _known_dates() -> set[str]:
+    """Даты 'DD.MM', файлы которых уже обработаны (есть в known_schedules)."""
+    async with SessionLocal() as session:
+        known = await crud.list_known(session)
+    result: set[str] = set()
+    for k in known:
+        d = watcher._date_from_filename(k.date_folder)
+        if d:
+            result.add(d)
+    return result
+
+
+async def _answer_day(
+    message: Message, bot: Bot, label: str, empty_text: str, *, with_state: bool
+) -> None:
+    """Расписание на день: различаем «пар нет» и «файл ещё не загружен»."""
+    group = await _require_group(message)
+    if not group:
+        return
+    entries = await _force_load_if_empty(label, group, bot)
+    if label not in await _known_dates():
+        text = "📅 Расписание на эту дату пока не загружено. Загляни позже! ⏳"
+    else:
+        text = formatting.format_schedule(
+            label, group, entries, now=now(), with_state=with_state, empty_text=empty_text
+        )
+    await _send(message, text, menu=True)
+
+
 # --- команды ---------------------------------------------------------------
 
 
 @router.message(Command("today"))
 async def cmd_today(message: Message, bot: Bot) -> None:
-    group = await _require_group(message)
-    if not group:
-        return
-    label = today_ddmm()
-    entries = await _force_load_if_empty(label, group, bot)
-    text = formatting.format_schedule(
-        label, group, entries, now=now(), with_state=True, empty_text="Сегодня пар нет 🎉"
+    await _answer_day(
+        message, bot, today_ddmm(), "Сегодня пар нет 🎉", with_state=True
     )
-    await _send(message, text)
 
 
 @router.message(Command("tomorrow"))
-async def cmd_tomorrow(message: Message) -> None:
-    group = await _require_group(message)
-    if not group:
-        return
-    label = tomorrow_ddmm()
-    entries = await _load(label, group)
-    text = formatting.format_schedule(
-        label, group, entries, now=now(), with_state=False, empty_text="Завтра пар нет 🎉"
+async def cmd_tomorrow(message: Message, bot: Bot) -> None:
+    await _answer_day(
+        message, bot, tomorrow_ddmm(), "Завтра пар нет 🎉", with_state=False
     )
-    await _send(message, text)
 
 
 # --- кнопки главного меню (реагируют на ТЕКСТ кнопки) -----------------------
@@ -102,28 +121,16 @@ async def cmd_tomorrow(message: Message) -> None:
 
 @router.message(F.text == BTN_TODAY)
 async def btn_today(message: Message, bot: Bot) -> None:
-    group = await _require_group(message)
-    if not group:
-        return
-    label = today_ddmm()
-    entries = await _force_load_if_empty(label, group, bot)
-    text = formatting.format_schedule(
-        label, group, entries, now=now(), with_state=True, empty_text="Сегодня пар нет 🎉"
+    await _answer_day(
+        message, bot, today_ddmm(), "Сегодня пар нет 🎉", with_state=True
     )
-    await _send(message, text, menu=True)
 
 
 @router.message(F.text == BTN_TOMORROW)
-async def btn_tomorrow(message: Message) -> None:
-    group = await _require_group(message)
-    if not group:
-        return
-    label = tomorrow_ddmm()
-    entries = await _load(label, group)
-    text = formatting.format_schedule(
-        label, group, entries, now=now(), with_state=False, empty_text="Завтра пар нет 🎉"
+async def btn_tomorrow(message: Message, bot: Bot) -> None:
+    await _answer_day(
+        message, bot, tomorrow_ddmm(), "Завтра пар нет 🎉", with_state=False
     )
-    await _send(message, text, menu=True)
 
 
 @router.message(F.text == BTN_NOW)

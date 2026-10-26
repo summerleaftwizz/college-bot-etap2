@@ -60,6 +60,7 @@ def _migrate_schema(sync_conn) -> None:
     _fix_users_id_sqlite(sync_conn)
     _add_column_if_missing(sync_conn, "schedule_entries", "teacher", "VARCHAR(255)")
     _add_column_if_missing(sync_conn, "users", "username", "VARCHAR(255)")
+    _add_column_if_missing(sync_conn, "users", "auto_delete", "BOOLEAN")
     for slot in (1, 2, 3):
         _add_column_if_missing(sync_conn, "users", f"favorite_{slot}", "VARCHAR(255)")
 

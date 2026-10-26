@@ -12,6 +12,7 @@ from aiogram.types import CallbackQuery, Message
 from config import settings
 from db import SessionLocal
 from db import crud
+from handlers import menu_dispatch
 from keyboards.admin import build_admin_keyboard
 from services import watcher
 
@@ -49,6 +50,8 @@ async def cb_broadcast(callback: CallbackQuery, state: FSMContext) -> None:
 async def on_broadcast_text(message: Message, state: FSMContext, bot: Bot) -> None:
     if not _is_admin(message.from_user.id):
         await state.clear()
+        return
+    if await menu_dispatch.cancel_fsm_on_menu(message, state):
         return
     text = (message.text or "").strip()
     await state.clear()

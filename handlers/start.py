@@ -10,12 +10,11 @@ from keyboards.menu import build_main_menu
 router = Router()
 
 WELCOME_TEXT = (
-    "Привет! Твоя группа: <b>{group}</b>\n\n"
-    "📖 <b>Расписание</b> — как пользоваться\n"
-    "📅 <b>Сегодня</b> / <b>Завтра</b> — пары на день\n"
-    "🔔 <b>Что сейчас</b> — идёт ли пара прямо сейчас\n"
-    "👤 <b>Профиль</b> — группа, уведомления, избранное\n"
-    "🛠 <b>Поддержка</b> — связь с разработчиком"
+    "👋 Привет! Я бот для просмотра расписания.\n\n"
+    "📅 Здесь ты можешь узнать, какие пары сегодня и завтра.\n"
+    "👤 В профиле можно сменить группу, добавить долги и настроить уведомления.\n"
+    "💡 Если что-то не работает — пиши в поддержку!\n\n"
+    "Выбирай действие на клавиатуре ниже 👇"
 )
 
 
@@ -29,9 +28,7 @@ async def cmd_start(message: Message) -> None:
         await session.commit()
 
     if group:
-        await message.answer(
-            WELCOME_TEXT.format(group=group), reply_markup=build_main_menu()
-        )
+        await message.answer(WELCOME_TEXT, reply_markup=build_main_menu())
         return
 
     async with SessionLocal() as session:
@@ -63,7 +60,7 @@ async def on_group_selected(callback: CallbackQuery) -> None:
             reply_markup=None,
         )
         await callback.message.answer(
-            f"Твоя группа: <b>{group}</b>\n\nКнопки внизу покажут расписание.",
+            WELCOME_TEXT,
             parse_mode="HTML",
             reply_markup=build_main_menu(),
         )

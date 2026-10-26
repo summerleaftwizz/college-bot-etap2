@@ -1,6 +1,6 @@
-"""Фоновая задача: напоминания о дедлайнах и праздничные поздравления.
+"""Фоновая задача: напоминания о сроках и праздничные поздравления.
 
-Дедлайны строго индивидуальны: напоминание уходит ровно тому telegram_id,
+Напоминания строго индивидуальны: уведомление уходит ровно тому telegram_id,
 который его создал. Поздравления (Новый год, День студента, 23 февраля,
 8 Марта, 1 сентября, Хэллоуин) уходят всем пользователям с включёнными
 уведомлениями ровно один раз за год.
@@ -66,7 +66,7 @@ async def _check_deadlines(bot: Bot) -> None:
 
     for deadline in due:
         await _send_safely(
-            bot, deadline.telegram_id, f"⏰ <b>Дедлайн!</b>\n\n{deadline.text}"
+            bot, deadline.telegram_id, f"⏰ <b>Напоминание!</b>\n\n{deadline.text}"
         )
 
 
@@ -98,7 +98,7 @@ async def _check_holiday(bot: Bot) -> None:
 
 
 async def reminders_loop(bot: Bot) -> None:
-    """Основной цикл: каждые CHECK_INTERVAL_SECONDS секунд проверяет дедлайны."""
+    """Основной цикл: каждые CHECK_INTERVAL_SECONDS секунд проверяет напоминания."""
     logger.info("старт цикла напоминаний")
     while True:
         try:

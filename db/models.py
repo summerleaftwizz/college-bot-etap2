@@ -17,6 +17,7 @@ class User(Base):
     group: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     subscribed: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    auto_delete: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     inactive: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     favorite_1: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     favorite_2: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

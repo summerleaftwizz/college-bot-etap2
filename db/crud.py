@@ -69,6 +69,17 @@ async def set_subscribed(session: AsyncSession, telegram_id: int, value: bool) -
     user.subscribed = value
 
 
+async def get_auto_delete(session: AsyncSession, telegram_id: int) -> bool:
+    user = await get_user(session, telegram_id)
+    return bool(user and user.auto_delete)
+
+
+async def set_auto_delete(session: AsyncSession, telegram_id: int, value: bool) -> bool:
+    user = await get_or_create_user(session, telegram_id)
+    user.auto_delete = value
+    return value
+
+
 async def mark_inactive(session: AsyncSession, telegram_id: int) -> None:
     user = await get_user(session, telegram_id)
     if user is not None:
