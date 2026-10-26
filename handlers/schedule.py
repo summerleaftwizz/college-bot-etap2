@@ -2,10 +2,18 @@ import logging
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import Message
 
 from db import SessionLocal
 from db import crud
+from keyboards.groups import build_groups_keyboard
+from keyboards.menu import (
+    BTN_GROUP,
+    BTN_NOW,
+    BTN_TODAY,
+    BTN_TOMORROW,
+    build_main_menu,
+)
 from services import formatting, watcher
 from utils import now, today_ddmm, tomorrow_ddmm
 
@@ -31,13 +39,16 @@ async def _load(date: str, group: str):
         return await crud.get_schedule(session, date, group)
 
 
-async def _send(message: Message, text: str) -> None:
+async def _send(message: Message, text: str, *, menu: bool = False) -> None:
     for chunk in formatting.split_message(text):
-        await message.answer(chunk, parse_mode="HTML")
+        await message.answer(
+            chunk,
+            parse_mode="HTML",
+            reply_markup=build_main_menu() if menu else None,
+        )
 
 
 async def _force_load_if_empty(label: str, group: str, bot: Bot):
-    """Загружает расписание; если пусто — один раз дёргает Яндекс.Диск."""
     entries = await _load(label, group)
     if not entries:
         try:
@@ -46,6 +57,9 @@ async def _force_load_if_empty(label: str, group: str, bot: Bot):
             logger.exception("ошибка принудительной загрузки расписания")
         entries = await _load(label, group)
     return entries
+
+
+# --- команды ---------------------------------------------------------------
 
 
 @router.message(Command("today"))
@@ -74,50 +88,57 @@ async def cmd_tomorrow(message: Message) -> None:
     await _send(message, text)
 
 
-# --- колбэки главного меню -------------------------------------------------
+# --- кнопки главного меню (реагируют на ТЕКСТ кнопки) -----------------------
 
 
-@router.callback_query(F.data == "menu:today")
-async def cb_today(callback: CallbackQuery, bot: Bot) -> None:
-    group = await _get_group(callback.from_user.id)
+@router.message(F.text == BTN_TODAY)
+async def btn_today(message: Message, bot: Bot) -> None:
+    group = await _require_group(message)
     if not group:
-        await callback.answer("Сначала выбери группу: /start", show_alert=True)
         return
     label = today_ddmm()
     entries = await _force_load_if_empty(label, group, bot)
     text = formatting.format_schedule(
         label, group, entries, now=now(), with_state=True, empty_text="Сегодня пар нет 🎉"
     )
-    await _send(callback.message, text)
-    await callback.answer()
+    await _send(message, text, menu=True)
 
 
-@router.callback_query(F.data == "menu:tomorrow")
-async def cb_tomorrow(callback: CallbackQuery) -> None:
-    group = await _get_group(callback.from_user.id)
+@router.message(F.text == BTN_TOMORROW)
+async def btn_tomorrow(message: Message) -> None:
+    group = await _require_group(message)
     if not group:
-        await callback.answer("Сначала выбери группу: /start", show_alert=True)
         return
     label = tomorrow_ddmm()
     entries = await _load(label, group)
     text = formatting.format_schedule(
         label, group, entries, now=now(), with_state=False, empty_text="Завтра пар нет 🎉"
     )
-    await _send(callback.message, text)
-    await callback.answer()
+    await _send(message, text, menu=True)
 
 
-@router.callback_query(F.data == "menu:now")
-async def cb_now(callback: CallbackQuery, bot: Bot) -> None:
-    group = await _get_group(callback.from_user.id)
+@router.message(F.text == BTN_NOW)
+async def btn_now(message: Message, bot: Bot) -> None:
+    group = await _require_group(message)
     if not group:
-        await callback.answer("Сначала выбери группу: /start", show_alert=True)
         return
     label = today_ddmm()
     entries = await _force_load_if_empty(label, group, bot)
     text = formatting.format_what_now(label, group, entries, now=now())
-    await _send(callback.message, text)
-    await callback.answer()
+    await _send(message, text, menu=True)
+
+
+@router.message(F.text == BTN_GROUP)
+async def btn_group(message: Message) -> None:
+    async with SessionLocal() as session:
+        groups = await crud.get_groups(session)
+    if not groups:
+        await message.answer("Расписание ещё не загружено, групп пока нет. Попробуй позже.")
+        return
+    await message.answer("Выбери группу:", reply_markup=build_groups_keyboard(groups))
+
+
+# --- change_group, подписка ------------------------------------------------
 
 
 @router.message(Command("change_group"))

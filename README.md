@@ -20,8 +20,11 @@ Telegram-бот на **aiogram 3** для показа расписания ко
   * рассылает всем подписанным пользователям их группу.
 * Защита от дублей: файл попадает в `known\\\\\\\_schedules` только после успешного
 парсинга и рассылки; при рестарте уже обработанные файлы не рассылаются.
-* Команды: `/start`, `/today`, `/tomorrow`, `/week`, `/change\\\\\\\_group`,
-`/subscribe`, `/unsubscribe`, `/admin\\\\\\\_known`, `/admin\\\\\\\_reparse`.
+* Главное меню — закреплённая Reply-клавиатура: «📅 Сегодня», «📅 Завтра»,
+  «🔔 Что сейчас», «👥 Сменить группу».
+* Команды: `/start`, `/today`, `/tomorrow`, `/change_group`,
+`/subscribe`, `/unsubscribe`, `/admin_known`, `/admin_reparse`.
+* «Что сейчас»: какая пара идёт, сколько осталось, когда начнётся следующая.
 * Graceful shutdown по `SIGTERM`/`SIGINT` (отмена watcher'а, закрытие сессий).
 
 \---
@@ -29,8 +32,8 @@ Telegram-бот на **aiogram 3** для показа расписания ко
 ## Структура проекта
 
 ```
-├── bot.py                # точка входа: polling + watcher + graceful shutdown
-├── config.py             # настройки из .env + настройки парсера Excel
+├── app.py                # точка входа: polling + watcher + graceful shutdown
+├── config.py             # настройки из .env + сетки звонков + настройки парсера
 ├── utils.py              # работа с датами/часовым поясом
 ├── db/
 │   ├── base.py           # DeclarativeBase
@@ -44,10 +47,14 @@ Telegram-бот на **aiogram 3** для показа расписания ко
 │   └── watcher.py        # фоновая задача поллинга и рассылки
 ├── handlers/
 │   ├── start.py          # /start + выбор группы
-│   ├── schedule.py       # /today /tomorrow /week /change\\\\\\\_group /(un)subscribe
-│   └── admin.py          # /admin\\\\\\\_known /admin\\\\\\\_reparse
-├── keyboards/groups.py   # inline-клавиатура групп
-├── tests/test\\\\\\\_parser.py  # unit-тест парсера
+│   ├── schedule.py       # /today /tomorrow /change_group /(un)subscribe + кнопки меню
+│   └── admin.py          # /admin_known /admin_reparse
+├── keyboards/
+│   ├── menu.py           # главное меню (ReplyKeyboardMarkup, is_persistent=True)
+│   └── groups.py         # inline-клавиатура групп
+├── tests/
+│   ├── test_parser.py    # unit-тест парсера (в т.ч. ФИО преподавателей)
+│   └── test_formatting.py # тесты сеток звонков, get_current_state и оформления
 ├── requirements.txt
 ├── Procfile
 ├── railway.json
@@ -72,7 +79,7 @@ pip install -r requirements.txt
 copy .env.example .env      # или cp .env.example .env
 # заполни .env (см. ниже)
 
-python bot.py
+python app.py
 ```
 
 Без PostgreSQL можно локально использовать SQLite — в `.env` укажи:
@@ -124,7 +131,7 @@ pytest -q
 
 ```yaml
    run:
-     command: python bot.py
+     command: python app.py
    ```
 
 5. Деплой. Логи — во вкладке логов приложения (бот пишет в stderr).
@@ -137,7 +144,7 @@ pytest -q
 1. Залей проект в Git-репозиторий, импортируй в Railway.
 2. Добавь PostgreSQL (платформа выдаст `DATABASE\\\\\\\_URL`).
 3. Пропиши переменные окружения.
-4. Деплой идёт по `Procfile` (`worker: python bot.py`) — порт не нужен.
+4. Деплой идёт по `Procfile` (`worker: python app.py`) — порт не нужен.
 
 \---
 

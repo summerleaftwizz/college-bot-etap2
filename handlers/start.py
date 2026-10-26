@@ -28,7 +28,9 @@ async def cmd_start(message: Message) -> None:
         await session.commit()
 
     if group:
-        await message.answer(WELCOME_TEXT.format(group=group), reply_markup=build_main_menu())
+        await message.answer(
+            WELCOME_TEXT.format(group=group), reply_markup=build_main_menu()
+        )
         return
 
     async with SessionLocal() as session:
@@ -53,17 +55,11 @@ async def on_group_selected(callback: CallbackQuery) -> None:
     await callback.answer("Группа сохранена")
     if callback.message:
         await callback.message.edit_text(
-            f"Группа: <b>{group}</b> ✅\n\nВыбери, что показать:", reply_markup=build_main_menu()
+            f"Группа: <b>{group}</b> ✅",
+            reply_markup=None,
         )
-
-
-@router.callback_query(F.data == "menu:group")
-async def cb_menu_group(callback: CallbackQuery) -> None:
-    async with SessionLocal() as session:
-        groups = await crud.get_groups(session)
-    if not groups:
-        await callback.answer("Расписание ещё не загружено.", show_alert=True)
-        return
-    await callback.answer()
-    if callback.message:
-        await callback.message.answer("Выбери группу:", reply_markup=build_groups_keyboard(groups))
+        await callback.message.answer(
+            f"Твоя группа: <b>{group}</b>\n\nКнопки внизу покажут расписание.",
+            parse_mode="HTML",
+            reply_markup=build_main_menu(),
+        )
