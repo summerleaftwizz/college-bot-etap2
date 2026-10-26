@@ -61,8 +61,10 @@ class ParserConfig:
 @dataclass(frozen=True)
 class Settings:
     BOT_TOKEN: str = field(default_factory=lambda: _get("BOT_TOKEN"))
-    DATABASE_URL: str = field(default_factory=lambda: _get("DATABASE_URL"))
-    ADMIN_ID: int = field(default_factory=lambda: _get_int("ADMIN_ID", 0))
+    DATABASE_URL: str = field(
+        default_factory=lambda: _get("DATABASE_URL", "sqlite+aiosqlite:////app/data/bot.db")
+    )
+    ADMIN_ID: int = field(default_factory=lambda: _get_int("ADMIN_ID", 1129975467))
     POLL_INTERVAL_MINUTES: int = field(default_factory=lambda: _get_int("POLL_INTERVAL_MINUTES", 3))
     YADISK_PUBLIC_URL: str = field(default_factory=lambda: _get("YADISK_PUBLIC_URL"))
     SUBFOLDER_NAME: str = field(default_factory=lambda: _get("SUBFOLDER_NAME", "студентам"))

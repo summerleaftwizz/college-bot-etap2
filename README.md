@@ -20,11 +20,16 @@ Telegram-бот на **aiogram 3** для показа расписания ко
   * рассылает всем подписанным пользователям их группу.
 * Защита от дублей: файл попадает в `known\\\\\\\_schedules` только после успешного
 парсинга и рассылки; при рестарте уже обработанные файлы не рассылаются.
-* Главное меню — закреплённая Reply-клавиатура: «📅 Сегодня», «📅 Завтра»,
-  «🔔 Что сейчас», «👥 Сменить группу».
-* Команды: `/start`, `/today`, `/tomorrow`, `/change_group`,
-`/subscribe`, `/unsubscribe`, `/admin_known`, `/admin_reparse`.
+* Главное меню — закреплённая Reply-клавиатура: «📖 Расписание», «📅 Сегодня»,
+  «📅 Завтра», «🔔 Что сейчас», «👤 Профиль», «🛠 Поддержка».
+* Команды: `/start`, `/today`, `/tomorrow`, `/week`, `/change_group`,
+`/subscribe`, `/unsubscribe`, `/profile`, `/support`, `/admin_known`,
+`/admin_reparse`.
 * «Что сейчас»: какая пара идёт, сколько осталось, когда начнётся следующая.
+* Профиль: группа, уведомления, избранные группы, долги, дедлайны, настройки.
+* Напоминания о дедлайнах (индивидуально по `telegram_id`) и поздравление
+  с Хэллоуином 31 октября — фоновый цикл `reminders`.
+* Админ-панель (только `ADMIN_ID`): рассылка, «кто в группе», статистика групп.
 * Graceful shutdown по `SIGTERM`/`SIGINT` (отмена watcher'а, закрытие сессий).
 
 \---
@@ -37,21 +42,25 @@ Telegram-бот на **aiogram 3** для показа расписания ко
 ├── utils.py              # работа с датами/часовым поясом
 ├── db/
 │   ├── base.py           # DeclarativeBase
-│   ├── models.py         # User, ScheduleEntry, KnownSchedule
+│   ├── models.py         # User, ScheduleEntry, KnownSchedule, Debt, Deadline
 │   ├── crud.py           # асинхронные операции с БД
 │   └── \\\\\\\_\\\\\\\_init\\\\\\\_\\\\\\\_.py       # engine, SessionLocal, init\\\\\\\_db
 ├── services/
 │   ├── yadisk.py         # клиент публичного API Яндекс.Диска
 │   ├── parser.py         # парсер Excel
 │   ├── formatting.py     # форматирование текста (HTML)
-│   └── watcher.py        # фоновая задача поллинга и рассылки
+│   ├── watcher.py        # фоновая задача поллинга и рассылки
+│   └── reminders.py      # напоминания о дедлайнах + праздники
 ├── handlers/
 │   ├── start.py          # /start + выбор группы
-│   ├── schedule.py       # /today /tomorrow /change_group /(un)subscribe + кнопки меню
-│   └── admin.py          # /admin_known /admin_reparse
+│   ├── schedule.py       # /today /tomorrow /week /change_group /(un)subscribe + кнопки меню
+│   ├── profile.py        # профиль, избранное, долги, дедлайны, настройки, поддержка
+│   └── admin.py          # админ-панель: рассылка, группа, статистика
 ├── keyboards/
 │   ├── menu.py           # главное меню (ReplyKeyboardMarkup, is_persistent=True)
-│   └── groups.py         # inline-клавиатура групп
+│   ├── groups.py         # inline-клавиатура групп
+│   ├── profile.py        # клавиатуры профиля/долгов/дедлайнов/настроек
+│   └── admin.py          # клавиатура админ-панели
 ├── tests/
 │   ├── test_parser.py    # unit-тест парсера (в т.ч. ФИО преподавателей)
 │   └── test_formatting.py # тесты сеток звонков, get_current_state и оформления

@@ -22,7 +22,9 @@ WELCOME_TEXT = (
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     async with SessionLocal() as session:
-        user = await crud.get_or_create_user(session, message.from_user.id)
+        user = await crud.get_or_create_user(
+            session, message.from_user.id, username=message.from_user.username
+        )
         group = user.group
         await session.commit()
 
@@ -49,6 +51,9 @@ async def on_group_selected(callback: CallbackQuery) -> None:
     group = callback.data[len("g:"):]
     async with SessionLocal() as session:
         await crud.set_group(session, callback.from_user.id, group)
+        user = await crud.get_user(session, callback.from_user.id)
+        if user is not None and callback.from_user.username:
+            user.username = callback.from_user.username
         await session.commit()
 
     await callback.answer("Группа сохранена")

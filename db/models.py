@@ -15,6 +15,7 @@ class User(Base):
     )
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True, nullable=False)
     group: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     subscribed: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
     inactive: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     favorite_1: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -42,3 +43,27 @@ class KnownSchedule(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     date_folder: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     notified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class Debt(Base):
+    """Долги пользователя (строго индивидуальны, привязка по telegram_id)."""
+
+    __tablename__ = "debts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    text: Mapped[str] = mapped_column(String(512), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class Deadline(Base):
+    """Дедлайны пользователя: due_ts — Unix timestamp, напоминание строго этому telegram_id."""
+
+    __tablename__ = "deadlines"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    text: Mapped[str] = mapped_column(String(512), nullable=False)
+    due_ts: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    notified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

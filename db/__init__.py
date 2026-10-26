@@ -1,9 +1,32 @@
+import logging
+import os
+
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from config import settings
 from db.base import Base
 from db import models  # noqa: F401  — регистрирует модели в Base.metadata
+
+logger = logging.getLogger(__name__)
+
+
+def _ensure_sqlite_dir(url: str) -> None:
+    """Создаёт каталог для файла SQLite, если его ещё нет (например, /app/data)."""
+    if not url.startswith("sqlite"):
+        return
+    if ":///" not in url:
+        return
+    path = url.split(":///", 1)[1]
+    if not path or path == ":memory:" or path.startswith("file:"):
+        return
+    directory = os.path.dirname(path)
+    if not directory:
+        return
+    try:
+        os.makedirs(directory, exist_ok=True)
+    except OSError as exc:
+        logger.warning("не удалось создать каталог БД %s: %s", directory, exc)
 
 
 def _normalize_database_url(url: str) -> str:
@@ -18,6 +41,7 @@ def _normalize_database_url(url: str) -> str:
     return url
 
 
+_ensure_sqlite_dir(_normalize_database_url(settings.DATABASE_URL))
 engine = create_async_engine(
     _normalize_database_url(settings.DATABASE_URL), echo=False, pool_pre_ping=True
 )
@@ -35,6 +59,7 @@ def _migrate_schema(sync_conn) -> None:
     """Применяет безопасные миграции схемы при старте (без потери данных)."""
     _fix_users_id_sqlite(sync_conn)
     _add_column_if_missing(sync_conn, "schedule_entries", "teacher", "VARCHAR(255)")
+    _add_column_if_missing(sync_conn, "users", "username", "VARCHAR(255)")
     for slot in (1, 2, 3):
         _add_column_if_missing(sync_conn, "users", f"favorite_{slot}", "VARCHAR(255)")
 

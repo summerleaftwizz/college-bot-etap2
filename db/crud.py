@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import models
@@ -19,13 +19,44 @@ async def get_user(session: AsyncSession, telegram_id: int) -> Optional[models.U
     return res.scalar_one_or_none()
 
 
-async def get_or_create_user(session: AsyncSession, telegram_id: int) -> models.User:
+async def get_or_create_user(
+    session: AsyncSession, telegram_id: int, username: Optional[str] = None
+) -> models.User:
     user = await get_user(session, telegram_id)
     if user is None:
         user = models.User(telegram_id=telegram_id, subscribed=True, inactive=False)
         session.add(user)
         await session.flush()
+    if username:
+        user.username = username
     return user
+
+
+async def list_all_users(session: AsyncSession) -> list[models.User]:
+    res = await session.execute(select(models.User))
+    return list(res.scalars())
+
+
+async def count_users(session: AsyncSession) -> int:
+    res = await session.execute(select(models.User.id))
+    return len(list(res.scalars()))
+
+
+async def group_stats(session: AsyncSession) -> list[tuple[str, int]]:
+    """Разбивка пользователей по группам: [(название группы, кол-во), ...]."""
+    res = await session.execute(
+        select(models.User.group, func.count(models.User.id))
+        .group_by(models.User.group)
+        .order_by(func.count(models.User.id).desc())
+    )
+    return list(res.all())
+
+
+async def list_users_in_group(session: AsyncSession, group: str) -> list[models.User]:
+    res = await session.execute(
+        select(models.User).where(models.User.group == group)
+    )
+    return list(res.scalars())
 
 
 async def set_group(session: AsyncSession, telegram_id: int, group: str) -> None:
@@ -154,3 +185,68 @@ async def list_known(session: AsyncSession) -> list[models.KnownSchedule]:
         select(models.KnownSchedule).order_by(models.KnownSchedule.date_folder)
     )
     return list(res.scalars())
+
+
+# --------------------------------------------------------------- debts -----
+
+async def add_debt(session: AsyncSession, telegram_id: int, text: str) -> models.Debt:
+    debt = models.Debt(telegram_id=telegram_id, text=text)
+    session.add(debt)
+    await session.flush()
+    return debt
+
+
+async def list_debts(session: AsyncSession, telegram_id: int) -> list[models.Debt]:
+    res = await session.execute(
+        select(models.Debt)
+        .where(models.Debt.telegram_id == telegram_id)
+        .order_by(models.Debt.created_at)
+    )
+    return list(res.scalars())
+
+
+async def delete_debt(session: AsyncSession, telegram_id: int, debt_id: int) -> bool:
+    """Удаляет долг, но только если он принадлежит этому пользователю."""
+    res = await session.execute(
+        select(models.Debt).where(
+            models.Debt.id == debt_id, models.Debt.telegram_id == telegram_id
+        )
+    )
+    debt = res.scalar_one_or_none()
+    if debt is None:
+        return False
+    await session.execute(delete(models.Debt).where(models.Debt.id == debt_id))
+    return True
+
+
+# ------------------------------------------------------------ deadlines ----
+
+async def add_deadline(session: AsyncSession, telegram_id: int, text: str, due_ts: int) -> models.Deadline:
+    deadline = models.Deadline(telegram_id=telegram_id, text=text, due_ts=due_ts)
+    session.add(deadline)
+    await session.flush()
+    return deadline
+
+
+async def list_deadlines(session: AsyncSession, telegram_id: int) -> list[models.Deadline]:
+    res = await session.execute(
+        select(models.Deadline)
+        .where(models.Deadline.telegram_id == telegram_id, models.Deadline.notified.is_(False))
+        .order_by(models.Deadline.due_ts)
+    )
+    return list(res.scalars())
+
+
+async def claim_due_deadlines(session: AsyncSession, now_ts: int) -> list[models.Deadline]:
+    """Атомарно забирает наступившие дедлайны (помечает notified=True),
+    чтобы напоминание ушло ровно один раз."""
+    res = await session.execute(
+        select(models.Deadline)
+        .where(models.Deadline.notified.is_(False), models.Deadline.due_ts <= now_ts)
+        .order_by(models.Deadline.due_ts)
+    )
+    due = list(res.scalars())
+    for d in due:
+        d.notified = True
+    await session.flush()
+    return due

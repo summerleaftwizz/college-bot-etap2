@@ -1,19 +1,28 @@
-"""Профиль пользователя, избранные группы и поддержка."""
+"""Профиль, избранные группы, долги, дедлайны, настройки и поддержка."""
 import html
+from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
+from config import settings
 from db import SessionLocal
 from db import crud
 from keyboards.groups import build_groups_keyboard
 from keyboards.profile import (
+    build_deadlines_keyboard,
+    build_debts_keyboard,
     build_favorites_keyboard,
     build_profile_keyboard,
+    build_settings_keyboard,
     build_slot_keyboard,
+    build_support_keyboard,
 )
 from services import formatting
+from utils import now, parse_due_datetime
 
 router = Router()
 
@@ -34,6 +43,42 @@ SCHEDULE_INFO_TEXT = (
     "Сменить группу можно в разделе 👤 <b>Профиль</b>."
 )
 
+GUIDE_TEXT = (
+    "💻 <b>Программирование (код, ошибки, скрипты):</b>\n"
+    "• Claude — хорошо объясняет сложные задачи/пишет коды почти на всех языках. "
+    "Может сделать задание — делает файлы в эксель, ворд и т.д., но платный (нужен VPN).\n"
+    "• DeepSeek Harness — почти такой же как Claude, дается пробный 1 доллар (VPN не требует).\n\n"
+    "📝 <b>Тексты, сочинения, эссе:</b>\n"
+    "• ChatGPT — универсал. Хорошо пишет тексты, но требует VPN.\n"
+    "• Gemini — неплохо пишет на русском, работает через Google-аккаунт. "
+    "Пишите @x6anax6, дам DNS, чтоб работал без VPN.\n\n"
+    "📊 <b>Математика и анализ данных:</b>\n"
+    "• DeepSeek — отлично решает задачи по математике и статистике.\n"
+    "• Qwen — хорошо справляется с формулами и таблицами.\n\n"
+    "🎨 <b>Картинки и дизайн:</b>\n"
+    "• ChatGPT — генерирует картинки по описанию.\n"
+    "• Gemini — умеет генерировать изображения.\n\n"
+    "🌐 <b>Перевод и работа с английским:</b>\n"
+    "• DeepSeek — переводит хорошо и бесплатно.\n"
+    "• Qwen — специализируется на китайском и английском.\n\n"
+    "📚 <b>Учеба и объяснения:</b>\n"
+    "• Claude — лучше всех объясняет сложные темы простыми словами.\n"
+    "• Gemini — хорошо ищет информацию в интернете.\n\n"
+    "━━━━━━━━━━━━━━\n\n"
+    "💡 <b>Совет:</b> Если не знаешь, какую выбрать — начни с DeepSeek. "
+    "Он бесплатный, работает без VPN и хорошо справляется с большинством задач.\n\n"
+    "Советую также от себя Gemini, в лс дам рабочий DNS, чтоб работал без впн.\n"
+    "Найти меня можно в поддержке.\n\n"
+    "С любовью @x6anax6 ❤️"
+)
+
+
+class ProfileStates(StatesGroup):
+    debt_text = State()
+    deadline_text = State()
+    deadline_when = State()
+    support_report = State()
+
 
 def _esc(value) -> str:
     return html.escape(str(value or ""), quote=False)
@@ -41,7 +86,7 @@ def _esc(value) -> str:
 
 async def _profile_text(telegram_id: int, username: str | None) -> str:
     async with SessionLocal() as session:
-        user = await crud.get_or_create_user(session, telegram_id)
+        user = await crud.get_or_create_user(session, telegram_id, username=username)
         group = user.group
         subscribed = user.subscribed
         await session.commit()
@@ -54,29 +99,97 @@ async def _favorites_text(telegram_id: int) -> str:
     return formatting.format_favorites(favorites)
 
 
+async def _refresh_profile(message: Message, telegram_id: int, username: str | None) -> None:
+    text = await _profile_text(telegram_id, username)
+    await message.answer(text, reply_markup=build_profile_keyboard())
+
+
+async def _send_debts(message: Message, telegram_id: int) -> None:
+    async with SessionLocal() as session:
+        debts = await crud.list_debts(session, telegram_id)
+
+    if not debts:
+        text = "📝 <b>Мои долги</b>\n\nДолгов нет 🎉"
+        await message.answer(text, reply_markup=build_debts_keyboard([]))
+        return
+
+    lines = ["📝 <b>Мои долги</b>\n"]
+    for i, d in enumerate(debts, 1):
+        lines.append(f"{i}. {_esc(d.text)}")
+    await message.answer("\n".join(lines), reply_markup=build_debts_keyboard(debts))
+
+
+async def _send_deadlines(message: Message, telegram_id: int) -> None:
+    async with SessionLocal() as session:
+        deadlines = await crud.list_deadlines(session, telegram_id)
+
+    if not deadlines:
+        text = "⏰ <b>Дедлайны</b>\n\nАктивных дедлайнов нет."
+        await message.answer(text, reply_markup=build_deadlines_keyboard([]))
+        return
+
+    lines = ["⏰ <b>Мои дедлайны</b>\n"]
+    for i, d in enumerate(deadlines, 1):
+        when = datetime.fromtimestamp(d.due_ts, tz=now().tzinfo).strftime("%d.%m.%Y %H:%M")
+        lines.append(f"{i}. {when} — {_esc(d.text)}")
+    await message.answer("\n".join(lines), reply_markup=build_deadlines_keyboard(deadlines))
+
+
 # --- кнопки главного меню --------------------------------------------------
 
 
 @router.message(F.text == "👤 Профиль")
 async def btn_profile(message: Message) -> None:
-    text = await _profile_text(message.from_user.id, message.from_user.username)
-    await message.answer(text, reply_markup=build_profile_keyboard())
+    await _refresh_profile(message, message.from_user.id, message.from_user.username)
 
 
 @router.message(F.text == "🛠 Поддержка")
 async def btn_support(message: Message) -> None:
-    await message.answer(SUPPORT_TEXT)
+    await message.answer(SUPPORT_TEXT, reply_markup=build_support_keyboard())
 
 
 @router.message(Command("profile"))
 async def cmd_profile(message: Message) -> None:
-    text = await _profile_text(message.from_user.id, message.from_user.username)
-    await message.answer(text, reply_markup=build_profile_keyboard())
+    await _refresh_profile(message, message.from_user.id, message.from_user.username)
 
 
 @router.message(Command("support"))
 async def cmd_support(message: Message) -> None:
-    await message.answer(SUPPORT_TEXT)
+    await message.answer(SUPPORT_TEXT, reply_markup=build_support_keyboard())
+
+
+# --- поддержка: сообщить о проблеме ----------------------------------------
+
+
+@router.callback_query(F.data == "sup:report")
+async def cb_sup_report(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(ProfileStates.support_report)
+    await callback.answer()
+    await callback.message.answer("Опиши проблему одним сообщением:")
+
+
+@router.message(ProfileStates.support_report)
+async def on_support_report(message: Message, state: FSMContext, bot) -> None:
+    text = (message.text or "").strip()
+    await state.clear()
+    if not text:
+        await message.answer("Пустой текст. Попробуй ещё раз: /support")
+        return
+
+    user = message.from_user
+    uname = f"@{_esc(user.username)}" if user.username else "—"
+    report = (
+        "⚠️ <b>Жалоба/проблема</b>\n\n"
+        f"От: {uname} (<code>{user.id}</code>)\n\n"
+        f"{_esc(text)}"
+    )
+    if settings.ADMIN_ID:
+        try:
+            await bot.send_message(settings.ADMIN_ID, report)
+        except Exception:
+            await message.answer("Не удалось переслать сообщение админу. Попробуй позже.")
+            return
+    await message.answer("✅ Сообщение переслано админу. Спасибо!")
 
 
 # --- профиль: inline-кнопки ------------------------------------------------
@@ -95,12 +208,49 @@ async def cb_profile_group(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "prof:back")
 async def cb_profile_back(callback: CallbackQuery) -> None:
-    text = await _profile_text(callback.from_user.id, callback.from_user.username)
+    await _refresh_profile(callback.message, callback.from_user.id, callback.from_user.username)
     await callback.answer()
-    try:
-        await callback.message.edit_text(text, reply_markup=build_profile_keyboard())
-    except Exception:
-        await callback.message.answer(text, reply_markup=build_profile_keyboard())
+
+
+@router.callback_query(F.data == "prof:settings")
+async def cb_profile_settings(callback: CallbackQuery) -> None:
+    async with SessionLocal() as session:
+        user = await crud.get_or_create_user(
+            session, callback.from_user.id, username=callback.from_user.username
+        )
+        subscribed = user.subscribed
+        await session.commit()
+
+    word = "включены 🔔" if subscribed else "выключены 🔕"
+    await callback.answer()
+    await callback.message.answer(
+        f"⚙️ <b>Настройки</b>\n\n🔔 Уведомления о расписании: {word}",
+        reply_markup=build_settings_keyboard(subscribed),
+    )
+
+
+@router.callback_query(F.data == "set:notify")
+async def cb_set_notify(callback: CallbackQuery) -> None:
+    async with SessionLocal() as session:
+        user = await crud.get_or_create_user(
+            session, callback.from_user.id, username=callback.from_user.username
+        )
+        user.subscribed = not user.subscribed
+        subscribed = user.subscribed
+        await session.commit()
+
+    word = "включены 🔔" if subscribed else "выключены 🔕"
+    await callback.answer()
+    await callback.message.answer(
+        f"⚙️ <b>Настройки</b>\n\n🔔 Уведомления о расписании: {word}",
+        reply_markup=build_settings_keyboard(subscribed),
+    )
+
+
+@router.callback_query(F.data == "set:guide")
+async def cb_set_guide(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await callback.message.answer(GUIDE_TEXT)
 
 
 # --- избранные --------------------------------------------------------------
@@ -123,7 +273,9 @@ async def cb_fav_slot(callback: CallbackQuery) -> None:
     slot = int(callback.data.split(":")[2])
 
     async with SessionLocal() as session:
-        user = await crud.get_or_create_user(session, callback.from_user.id)
+        user = await crud.get_or_create_user(
+            session, callback.from_user.id, username=callback.from_user.username
+        )
         current_group = user.group
         favorites = await crud.get_favorites(session, callback.from_user.id)
         slot_group = favorites.get(slot)
@@ -187,3 +339,115 @@ async def cb_fav_clear(callback: CallbackQuery) -> None:
         await callback.message.edit_text(text, reply_markup=build_favorites_keyboard(favorites))
     except Exception:
         await callback.message.answer(text, reply_markup=build_favorites_keyboard(favorites))
+
+
+# --- долги ------------------------------------------------------------------
+
+
+@router.callback_query(F.data == "debt:list")
+async def cb_debt_list(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await _send_debts(callback.message, callback.from_user.id)
+
+
+@router.callback_query(F.data == "debt:noop")
+async def cb_debt_noop(callback: CallbackQuery) -> None:
+    await callback.answer("Жми ✅, чтобы закрыть долг")
+
+
+@router.callback_query(F.data == "debt:add")
+async def cb_debt_add(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(ProfileStates.debt_text)
+    await callback.answer()
+    await callback.message.answer("Введи текст долга (например, «Сдать лабу по физике»):")
+
+
+@router.message(ProfileStates.debt_text)
+async def on_debt_text(message: Message, state: FSMContext) -> None:
+    text = (message.text or "").strip()
+    await state.clear()
+    if not text:
+        await message.answer("Пустой текст — долг не добавлен.")
+        return
+
+    async with SessionLocal() as session:
+        await crud.add_debt(session, message.from_user.id, text[:512])
+        await session.commit()
+
+    await message.answer(f"✅ Долг добавлен: {_esc(text)}")
+    await _send_debts(message, message.from_user.id)
+
+
+@router.callback_query(F.data.startswith("debt:del:"))
+async def cb_debt_del(callback: CallbackQuery) -> None:
+    try:
+        debt_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Неверный долг", show_alert=True)
+        return
+
+    async with SessionLocal() as session:
+        deleted = await crud.delete_debt(session, callback.from_user.id, debt_id)
+        await session.commit()
+
+    if not deleted:
+        await callback.answer("Долг не найден", show_alert=True)
+        return
+
+    await callback.answer("Долг закрыт ✅")
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await _send_debts(callback.message, callback.from_user.id)
+
+
+# --- дедлайны ---------------------------------------------------------------
+
+
+@router.callback_query(F.data == "dl:list")
+async def cb_dl_list(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await _send_deadlines(callback.message, callback.from_user.id)
+
+
+@router.callback_query(F.data == "dl:add")
+async def cb_dl_add(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(ProfileStates.deadline_text)
+    await callback.answer()
+    await callback.message.answer("Введи текст задачи (например, «Сдать лабу по физике»):")
+
+
+@router.message(ProfileStates.deadline_text)
+async def on_dl_text(message: Message, state: FSMContext) -> None:
+    text = (message.text or "").strip()
+    if not text:
+        await state.clear()
+        await message.answer("Пустой текст — дедлайн не добавлен.")
+        return
+    await state.update_data(dl_text=text[:512])
+    await state.set_state(ProfileStates.deadline_when)
+    await message.answer("Когда дедлайн? Формат: <code>31.10.2026 18:00</code> (или <code>31.10 18:00</code>)")
+
+
+@router.message(ProfileStates.deadline_when)
+async def on_dl_when(message: Message, state: FSMContext) -> None:
+    raw = (message.text or "").strip()
+    due = parse_due_datetime(raw)
+    if due is None:
+        await message.answer(
+            "Не понял дату. Формат: <code>31.10.2026 18:00</code> (или <code>31.10 18:00</code>). Попробуй ещё раз."
+        )
+        return
+
+    data = await state.get_data()
+    text = data.get("dl_text", "")
+    await state.clear()
+
+    async with SessionLocal() as session:
+        await crud.add_deadline(session, message.from_user.id, text, int(due.timestamp()))
+        await session.commit()
+
+    when = due.strftime("%d.%m.%Y %H:%M")
+    await message.answer(f"⏰ Дедлайн добавлен: {when} — {_esc(text)}\nНапомню ровно в это время.")
+    await _send_deadlines(message, message.from_user.id)

@@ -10,7 +10,7 @@ from aiogram.client.default import DefaultBotProperties
 from config import settings
 from db import dispose_db, init_db
 from handlers import admin, profile, schedule, start
-from services import watcher
+from services import reminders, watcher
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,7 @@ async def main() -> None:
     dp.include_routers(start.router, profile.router, schedule.router, admin.router)
 
     watcher_task = asyncio.create_task(watcher.watcher_loop(bot))
+    reminders_task = asyncio.create_task(reminders.reminders_loop(bot))
 
     loop = asyncio.get_running_loop()
     stop = asyncio.Event()
@@ -63,9 +64,9 @@ async def main() -> None:
                     logger.error("polling завершился с ошибкой: %s", exc)
     finally:
         logger.info("Останавливаю бота…")
-        for task in (polling_task, watcher_task, stop_task):
+        for task in (polling_task, watcher_task, reminders_task, stop_task):
             task.cancel()
-        for task in (polling_task, watcher_task, stop_task):
+        for task in (polling_task, watcher_task, reminders_task, stop_task):
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         await bot.session.close()
