@@ -22,8 +22,8 @@ router = Router()
 WELCOME_TEXT = (
     "⭐ Расписание КГТТ\n\n"
     "Слежу за расписанием техникума и присылаю его, как только выложат.\n\n"
-    "&gt; ⚡ пары на сегодня и завтра в один тап\n"
-    "&gt; ⚠️ новое расписание и замены сразу уведомлением\n\n"
+    "<blockquote>⚡ пары на сегодня и завтра в один тап\n"
+    "⚠️ новое расписание и замены сразу уведомлением</blockquote>\n\n"
     "Выбери специальность или напиши цифру своей группы 👇"
 )
 
@@ -62,7 +62,7 @@ async def cmd_start(message: Message) -> None:
         await session.commit()
 
     if group or is_teacher:
-        await message.answer(WELCOME_TEXT, reply_markup=build_main_menu())
+        await message.answer(WELCOME_TEXT, parse_mode="HTML", reply_markup=build_main_menu())
         return
 
     async with SessionLocal() as session:
@@ -76,7 +76,7 @@ async def cmd_start(message: Message) -> None:
         )
         return
 
-    await message.answer(WELCOME_TEXT, reply_markup=build_specialties_keyboard())
+    await message.answer(WELCOME_TEXT, parse_mode="HTML", reply_markup=build_specialties_keyboard())
 
 
 # --- шаг 1: специальность --------------------------------------------------

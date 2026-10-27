@@ -38,6 +38,8 @@ class ScheduleEntry(Base):
     subject: Mapped[str] = mapped_column(String(512), default="", nullable=False)
     room: Mapped[str] = mapped_column(String(128), default="", nullable=False)
     teacher: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Подгруппы: JSON-список {"room": "...", "teacher": "..."} (или NULL).
+    subgroups: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
 
 
 class KnownSchedule(Base):

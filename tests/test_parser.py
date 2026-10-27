@@ -73,6 +73,55 @@ def test_group_pattern_accepts_english_subgroups():
     assert not __import__("re").match(pat, "Иванов И.И.")
 
 
+def test_is_fio_patterns():
+    """ФИО-детект: разные фамилии, никакой хардкод."""
+    from services.parser import _is_fio
+    assert _is_fio("Платицына Е. В.")
+    assert _is_fio("Байшева Я. В.")
+    assert _is_fio("Ощепкова А. С.")
+    assert _is_fio("Грабанова И. И.")
+    assert _is_fio("Petrov A. B.")
+    assert not _is_fio("121")
+    assert not _is_fio("Иностранный язык")
+    assert not _is_fio("каб. 304")
+
+
+def test_extract_subgroups_from_row():
+    """Строка английского: предмет + кабинеты + две фамилии → 2 подгруппы."""
+    import pandas as pd
+    from services.parser import ParserConfig, _extract_subgroups
+    df = pd.DataFrame(
+        [
+            ["Иностранный язык", "Ино... 121", "Платицына Е. В.", "Байшева Я. В."],
+        ],
+        dtype=object,
+    )
+    cfg = ParserConfig()
+    subs = _extract_subgroups(df, 0, sc=0, rc=1, block_end=1, lesson_col=0, cfg=cfg)
+    assert len(subs) == 2
+    assert subs[0]["room"] == "Ино... 121" and subs[0]["teacher"] == "Платицына Е. В."
+    assert subs[1]["room"] == "" and subs[1]["teacher"] == "Байшева Я. В."
+
+
+def test_extract_subgroups_not_bleed_into_next_group():
+    """Окно подгрупп не заезжает в колонки следующей группы."""
+    import pandas as pd
+    from services.parser import ParserConfig, _extract_subgroups
+    # col0 - предмет гр.1, col1 - каб. гр.1, col2 - предмет гр.2 ("Химия"), col3 - каб. гр.2
+    df = pd.DataFrame(
+        [
+            ["Иностранный язык", "304", "Химия", "201"],
+        ],
+        dtype=object,
+    )
+    cfg = ParserConfig()
+    subs = _extract_subgroups(df, 0, sc=0, rc=1, block_end=1, lesson_col=0, cfg=cfg, max_col=2)
+    # только кабинет 304, «Химия» не захвачена
+    assert len(subs) == 1
+    assert subs[0]["room"] == "304"
+    assert not subs[0]["teacher"]
+
+
 def test_parse_raises_on_unknown_format():
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:

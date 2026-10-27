@@ -11,6 +11,7 @@
     > 🚪 каб. 304
 """
 import html
+import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Optional
@@ -208,6 +209,50 @@ def _room_text(room) -> str:
     return f"каб. {esc(r)}"
 
 
+def _subgroups_of(entry) -> list[dict]:
+    """Достаёт подгруппы пары (список {'room':…, 'teacher':…}) — из атрибута
+    или из JSON-строки, как она хранится в БД."""
+    raw = getattr(entry, "subgroups", None)
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return []
+        return data if isinstance(data, list) else []
+    return list(raw)
+
+
+def _subgroup_line(idx: int, sub: dict, total: int) -> str:
+    """'1 п/г · ауд. 121 · Платицына Е. В.'; пустая подгруппа — «пары нет»."""
+    parts = []
+    room = _room_text(sub.get("room") or "")
+    if room:
+        parts.append(room)
+    teacher = (sub.get("teacher") or "").strip()
+    if teacher:
+        parts.append(esc(teacher))
+    if not parts:
+        if idx < total:  # не последняя — значит, у следующих п/г пары нет
+            return f"{idx} п/г · <i>пары нет</i>"
+        return f"{idx} п/г · <i>пары нет</i>"
+    return f"{idx} п/г · " + " · ".join(parts)
+
+
+def _subgroups_block(entry) -> list[str]:
+    """Строки подгрупп пары (1 п/г, 2 п/г, …)."""
+    subs = _subgroups_of(entry)
+    if not subs:
+        return []
+    total = len(subs)
+    lines = [_subgroup_line(i, sub, total) for i, sub in enumerate(subs, 1)]
+    if total == 1:
+        # вторая подгруппа в файле не заполнена — сообщаем об этом явно
+        lines[0] += " (<i>у 2 подгруппы пары нет</i>)"
+    return lines
+
+
 def _lesson_subject(entry, teacher_mode: bool) -> str:
     subject = esc(getattr(entry, "subject", "") or "")
     if teacher_mode:
@@ -240,8 +285,9 @@ def _render_lesson_block(entry, n: int, bells, teacher_mode: bool) -> str:
     else:
         lines.append(f"🕒 <b>{n} пара</b>")
     lines.append(f"📚 {_lesson_subject(entry, teacher_mode)}")
+    lines.extend(_subgroups_block(entry))
     place = _lesson_place(entry, teacher_mode)
-    if place:
+    if place and not _subgroups_of(entry):
         lines.append(place)
     return "<blockquote>" + "\n".join(lines) + "</blockquote>"
 

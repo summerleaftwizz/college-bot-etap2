@@ -1,4 +1,5 @@
 """Тесты Этапа 2: сетки звонков, get_current_state, форматирование."""
+import json
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -228,3 +229,50 @@ def test_split_message_long():
     assert len(chunks) > 1
     assert all(len(c) <= 4096 for c in chunks)
     assert "\n\n".join(chunks) == text  # ничего не обрезано и не потеряно
+
+
+# --- подгруппы (английский и др.) ------------------------------------------
+
+
+def test_subgroups_rendered_as_separate_lines():
+    """Подгруппы: отдельные строки «1 п/г · ауд. 121 · ФИО», не склейка в 📚."""
+    e = entry(3, subject="Иностранный язык")
+    e.subgroups = [{"room": "121", "teacher": "Платицына Е. В."},
+                   {"room": "202", "teacher": "Байшева Я. В."}]
+    text = format_schedule("26.10", "1ИСИП-25-9", [e])
+    assert "📚 Иностранный язык" in text
+    assert "1 п/г · каб. 121 · Платицына Е. В." in text
+    assert "2 п/г · каб. 202 · Байшева Я. В." in text
+
+
+def test_subgroups_single_missing_second():
+    """Одна подгруппа + пометка «у 2 подгруппы пары нет»."""
+    e = entry(3, subject="Иностранный язык")
+    e.subgroups = [{"room": "121", "teacher": "Платицына Е. В."}]
+    text = format_schedule("26.10", "1ИСИП-25-9", [e])
+    assert "1 п/г · каб. 121 · Платицына Е. В. (<i>у 2 подгруппы пары нет</i>)" in text
+
+
+def test_subgroups_missing_pair_line():
+    """Подгруппа без кабинета и ФИО → «N п/г · пары нет»."""
+    e = entry(3, subject="Иностранный язык")
+    e.subgroups = [{"room": "121", "teacher": "Платицына Е. В."},
+                   {"room": "", "teacher": ""}]
+    text = format_schedule("26.10", "1ИСИП-25-9", [e])
+    assert "2 п/г · <i>пары нет</i>" in text
+
+
+def test_subgroups_json_string_from_db():
+    """entry.subgroups приходит из БД JSON-строкой — парсится корректно."""
+    e = entry(3, subject="Иностранный язык")
+    e.subgroups = json.dumps([{"room": "121", "teacher": "Ощепкова А. С."}],
+                             ensure_ascii=False)
+    text = format_schedule("26.10", "1ИСИП-25-9", [e])
+    assert "1 п/г · каб. 121 · Ощепкова А. С." in text
+
+
+def test_no_subgroups_field_is_ok():
+    """Обычная пара без подгрупп — без строк «п/г»."""
+    text = format_schedule("26.10", "1ИСИП-25-9", [entry(3, room="307", teacher="Иванов И. И.")])
+    assert "п/г" not in text
+    assert "🚪 каб. 307 · Иванов И. И." in text
