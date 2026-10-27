@@ -258,6 +258,24 @@ def _extract_subgroups(
 
     for i, sub in enumerate(subs, 1):
         sub.number = i
+    # --- ВРЕМЕННЫЙ DEBUG (удалить после диагностики) ----------------------
+    try:
+        _subject = _cell_to_str(df.iat[r, sc]) if sc < df.shape[1] else ""
+        if "иностранн" in _subject.lower():
+            print(
+                "DEBUG SUBGROUPS: row=%s sc=%s stop_cols=%s values=%s -> %s"
+                % (
+                    r,
+                    sc,
+                    sorted(stop_cols),
+                    values,
+                    [(s.number, s.room, s.teacher) for s in subs],
+                ),
+                flush=True,
+            )
+    except Exception:  # noqa: BLE001
+        pass
+    # ----------------------------------------------------------------------
     return subs
 
 
@@ -287,6 +305,24 @@ def _parse_sheet(
         names = [_cell_to_str(df.iat[block_start, sc]) for sc, _ in pairs]
 
         for r in range(block_start + 1, block_end):
+            # --- ВРЕМЕННЫЙ DEBUG (удалить после диагностики) --------------
+            try:
+                _dbg_row = [
+                    (c, _cell_to_str(df.iat[r, c]))
+                    for c in range(df.shape[1])
+                    if _cell_to_str(df.iat[r, c])
+                ]
+                if any("иностранн" in str(v).lower() for _, v in _dbg_row):
+                    print(f"DEBUG ROW: sheet_row={r} cells={_dbg_row}", flush=True)
+                    print(
+                        "DEBUG COLS: lesson_col=%s pairs=%s subject_cols=%s"
+                        % (lesson_col, pairs, subject_cols),
+                        flush=True,
+                    )
+            except Exception as _dbg_exc:  # noqa: BLE001
+                print(f"DEBUG ROW ERROR: {_dbg_exc}", flush=True)
+            # --------------------------------------------------------------
+
             lesson_number = _to_int(df.iat[r, lesson_col])
             if lesson_number is None:
                 continue  # строка с ФИО преподавателя или пустая
