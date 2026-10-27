@@ -86,79 +86,55 @@ def test_is_fio_patterns():
     assert not _is_fio("каб. 304")
 
 
-def test_extract_subgroups_two_pairs():
-    """Тест 1: предмет | ауд.1 | ФИО1 | ауд.2 | ФИО2 → 2 подгруппы."""
+def test_extract_subgroups_from_row():
+    """Реальная строка: предмет | ауд.1 | ФИО1 | ауд.2 | ФИО2 → 2 подгруппы."""
     import pandas as pd
     from services.parser import ParserConfig, _extract_subgroups
     df = pd.DataFrame(
         [
             ["Иностранный язык в профессиональной деятельности",
-             "Ино 319", "Кобзова С. В.", "Ино 202", "Ощепкова А. С."],
+             "Ино... 319", "Кобзова С. В.", "Ино... 202", "Ощепкова А. С."],
         ],
         dtype=object,
     )
-    subs = _extract_subgroups(df, 0, sc=0, block_end=1, lesson_col=0, cfg=ParserConfig())
+    cfg = ParserConfig()
+    subs = _extract_subgroups(df, 0, sc=0, rc=1, block_end=1, lesson_col=0, cfg=cfg)
     assert len(subs) == 2, subs
-    assert subs[0].number == 1
-    assert subs[0].room == "319" and subs[0].teacher == "Кобзова С. В."
-    assert subs[1].number == 2
-    assert subs[1].room == "202" and subs[1].teacher == "Ощепкова А. С."
+    assert subs[0]["room"] == "Ино... 319" and subs[0]["teacher"] == "Кобзова С. В."
+    assert subs[1]["room"] == "Ино... 202" and subs[1]["teacher"] == "Ощепкова А. С."
 
 
-def test_extract_subgroups_single_pair():
-    """Тест 2: одна пара → один элемент (вывод без «п/г»)."""
+def test_extract_subgroups_single_column_empty():
+    """Вторая подгруппа пустая → одна подгруппа (кабинет + ФИО)."""
     import pandas as pd
     from services.parser import ParserConfig, _extract_subgroups
-    df = pd.DataFrame([["Иностранный язык", "Ино 319", "Кобзова С. В.", None, None]],
-                      dtype=object)
-    subs = _extract_subgroups(df, 0, sc=0, block_end=1, lesson_col=0, cfg=ParserConfig())
+    df = pd.DataFrame(
+        [["Иностранный язык", "Ино... 319", "Кобзова С. В.", None, None]],
+        dtype=object,
+    )
+    cfg = ParserConfig()
+    subs = _extract_subgroups(df, 0, sc=0, rc=1, block_end=1, lesson_col=0, cfg=cfg)
     assert len(subs) == 1
-    assert subs[0].room == "319" and subs[0].teacher == "Кобзова С. В."
+    assert subs[0]["room"] == "Ино... 319" and subs[0]["teacher"] == "Кобзова С. В."
 
 
-def test_extract_subgroups_none_in_middle():
-    """Тест 3: пустая ячейка между парами не ломает группировку."""
+def test_extract_subgroups_not_bleed_into_next_group():
+    """Окно подгрупп не заезжает в колонки следующей группы."""
     import pandas as pd
     from services.parser import ParserConfig, _extract_subgroups
+    # col0 - предмет гр.1, col1 - каб. гр.1, col2 - предмет гр.2 ("Химия"), col3 - каб. гр.2
     df = pd.DataFrame(
-        [["Иностранный язык", "Ино 319", "Кобзова С. В.", None, "Ино 202",
-          "Ощепкова А. С."]],
+        [
+            ["Иностранный язык", "304", "Химия", "201"],
+        ],
         dtype=object,
     )
-    subs = _extract_subgroups(df, 0, sc=0, block_end=1, lesson_col=0, cfg=ParserConfig())
-    assert len(subs) == 2, subs
-    assert subs[0].room == "319" and subs[0].teacher == "Кобзова С. В."
-    assert subs[1].room == "202" and subs[1].teacher == "Ощепкова А. С."
-
-
-def test_extract_subgroups_three_pairs():
-    """Тест 4: три пары в строке → три подгруппы."""
-    import pandas as pd
-    from services.parser import ParserConfig, _extract_subgroups
-    df = pd.DataFrame(
-        [["Иностранный язык", "Ино 319", "Кобзова С. В.", "Ино 202",
-          "Ощепкова А. С.", "Ино 105", "Грабанова И. И."]],
-        dtype=object,
-    )
-    subs = _extract_subgroups(df, 0, sc=0, block_end=1, lesson_col=0, cfg=ParserConfig())
-    assert len(subs) == 3, subs
-    assert [s.room for s in subs] == ["319", "202", "105"]
-    assert [s.number for s in subs] == [1, 2, 3]
-
-
-def test_extract_subgroups_stops_at_next_group_subject():
-    """Колонка предмета другой группы не попадает в подгруппы."""
-    import pandas as pd
-    from services.parser import ParserConfig, _extract_subgroups
-    df = pd.DataFrame(
-        [["Иностранный язык", "Ино 319", "Кобзова С. В.", "Химия", "201"]],
-        dtype=object,
-    )
-    subs = _extract_subgroups(
-        df, 0, sc=0, block_end=1, lesson_col=0, cfg=ParserConfig(), stop_cols=frozenset({3})
-    )
-    assert [s.room for s in subs] == ["319"]
-    assert [s.teacher for s in subs] == ["Кобзова С. В."]
+    cfg = ParserConfig()
+    subs = _extract_subgroups(df, 0, sc=0, rc=1, block_end=1, lesson_col=0, cfg=cfg, max_col=2)
+    # только кабинет 304, «Химия» не захвачена
+    assert len(subs) == 1
+    assert subs[0]["room"] == "304"
+    assert not subs[0]["teacher"]
 
 
 def test_parse_full_lesson_with_two_subgroups():
@@ -182,10 +158,9 @@ def test_parse_full_lesson_with_two_subgroups():
     assert len(lessons) == 1
     subs = lessons[0].subgroups
     assert len(subs) == 2, subs
-    assert subs[0].room == "319" and subs[0].teacher == "Кобзова С. В."
-    assert subs[1].room == "202" and subs[1].teacher == "Ощепкова А. С."
-    # обратная совместимость: room/teacher заполнены данными первой подгруппы
-    assert lessons[0].room == "319" and lessons[0].teacher == "Кобзова С. В."
+    assert subs[0]["room"] == "Ино... 319" and subs[0]["teacher"] == "Кобзова С. В."
+    assert subs[1]["room"] == "Ино... 202" and subs[1]["teacher"] == "Ощепкова А. С."
+    assert lessons[0].room == "" and lessons[0].teacher == ""
 
 
 def test_parse_raises_on_unknown_format():
