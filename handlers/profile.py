@@ -1,5 +1,6 @@
 """Профиль, преподаватели, долги, напоминания, настройки и поддержка."""
 import html
+import logging
 from datetime import datetime
 
 from aiogram import F, Router
@@ -25,6 +26,7 @@ from services import formatting
 from utils import now, parse_due_datetime
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 SUPPORT_TEXT = (
     "🛠 <b>Поддержка</b>\n\n"
@@ -149,7 +151,6 @@ async def _refresh_profile(message: Message, telegram_id: int, username: str | N
         message,
         text,
         reply_markup=build_profile_keyboard(is_teacher),
-        telegram_id=telegram_id,
     )
 
 
@@ -159,9 +160,7 @@ async def _send_debts(message: Message, telegram_id: int) -> None:
 
     if not debts:
         text = "📝 <b>Мои долги</b>\n\nДолгов нет 🎉"
-        await _answer_tracked(
-            message, text, reply_markup=build_debts_keyboard([]), telegram_id=telegram_id
-        )
+        await _answer_tracked(message, text, reply_markup=build_debts_keyboard([]))
         return
 
     lines = ["📝 <b>Мои долги</b>\n"]
@@ -171,7 +170,6 @@ async def _send_debts(message: Message, telegram_id: int) -> None:
         message,
         "\n".join(lines),
         reply_markup=build_debts_keyboard(debts),
-        telegram_id=telegram_id,
     )
 
 
@@ -181,9 +179,7 @@ async def _send_reminders(message: Message, telegram_id: int) -> None:
 
     if not deadlines:
         text = "⏰ <b>Напоминания</b>\n\nАктивных напоминаний нет."
-        await _answer_tracked(
-            message, text, reply_markup=build_reminders_keyboard([]), telegram_id=telegram_id
-        )
+        await _answer_tracked(message, text, reply_markup=build_reminders_keyboard([]))
         return
 
     lines = ["⏰ <b>Мои напоминания</b>\n"]
@@ -194,7 +190,6 @@ async def _send_reminders(message: Message, telegram_id: int) -> None:
         message,
         "\n".join(lines),
         reply_markup=build_reminders_keyboard(deadlines),
-        telegram_id=telegram_id,
     )
 
 
@@ -203,7 +198,14 @@ async def _send_reminders(message: Message, telegram_id: int) -> None:
 
 @router.message(F.text == "👤 Профиль")
 async def btn_profile(message: Message) -> None:
-    await _refresh_profile(message, message.from_user.id, message.from_user.username)
+    try:
+        await _refresh_profile(message, message.from_user.id, message.from_user.username)
+    except Exception:
+        logger.exception("не удалось показать профиль для %s", message.from_user.id)
+        await message.answer(
+            "⚠️ Не удалось открыть профиль. Попробуй ещё раз: /profile",
+            reply_markup=build_main_menu(),
+        )
 
 
 @router.message(F.text == "🛠 Поддержка")
@@ -213,7 +215,14 @@ async def btn_support(message: Message) -> None:
 
 @router.message(Command("profile"))
 async def cmd_profile(message: Message) -> None:
-    await _refresh_profile(message, message.from_user.id, message.from_user.username)
+    try:
+        await _refresh_profile(message, message.from_user.id, message.from_user.username)
+    except Exception:
+        logger.exception("не удалось показать профиль для %s", message.from_user.id)
+        await message.answer(
+            "⚠️ Не удалось открыть профиль. Попробуй ещё раз: /profile",
+            reply_markup=build_main_menu(),
+        )
 
 
 @router.message(Command("support"))
