@@ -71,17 +71,6 @@ async def set_subscribed(session: AsyncSession, telegram_id: int, value: bool) -
     user.subscribed = value
 
 
-async def get_auto_delete(session: AsyncSession, telegram_id: int) -> bool:
-    user = await get_user(session, telegram_id)
-    return bool(user and user.auto_delete)
-
-
-async def set_auto_delete(session: AsyncSession, telegram_id: int, value: bool) -> bool:
-    user = await get_or_create_user(session, telegram_id)
-    user.auto_delete = value
-    return value
-
-
 async def mark_inactive(session: AsyncSession, telegram_id: int) -> None:
     user = await get_user(session, telegram_id)
     if user is not None:
@@ -181,20 +170,23 @@ async def get_groups(session: AsyncSession) -> list[str]:
 
 async def list_teacher_catalog(
     session: AsyncSession,
+    group: Optional[str] = None,
 ) -> list[tuple[str, str, str]]:
-    """Каталог преподавателей из расписания: [(ФИО, предмет, кабинет), …].
+    """Каталог преподавателей из спарсенного расписания: [(ФИО, предмет, кабинет), …].
 
-    Уникальные комбинации, ФИО без дубликатов-пробелов, отсортировано
-    по алфавиту. Включает и преподавателей из подгрупп (JSON-поле).
+    Если задана group — только пары этой группы. Уникальные комбинации,
+    ФИО без дубликатов-пробелов, отсортировано по алфавиту. Включает и
+    преподавателей из подгрупп (JSON-поле).
     """
-    res = await session.execute(
-        select(
-            models.ScheduleEntry.teacher,
-            models.ScheduleEntry.subject,
-            models.ScheduleEntry.room,
-            models.ScheduleEntry.subgroups,
-        )
+    stmt = select(
+        models.ScheduleEntry.teacher,
+        models.ScheduleEntry.subject,
+        models.ScheduleEntry.room,
+        models.ScheduleEntry.subgroups,
     )
+    if group:
+        stmt = stmt.where(models.ScheduleEntry.group == group)
+    res = await session.execute(stmt)
     seen: set[tuple[str, str, str]] = set()
     for teacher, subject, room, subgroups_json in res.all():
         subject = (subject or "").strip()

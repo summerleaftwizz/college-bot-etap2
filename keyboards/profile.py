@@ -20,14 +20,6 @@ def build_profile_keyboard(is_teacher: bool = False) -> InlineKeyboardMarkup:
     )
 
 
-def build_teachers_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад в профиль", callback_data="prof:back")],
-        ]
-    )
-
-
 def build_debts_keyboard(debts) -> InlineKeyboardMarkup:
     """Список долгов: ✅ рядом с каждым + «Добавить долг»."""
     rows = [
@@ -48,13 +40,11 @@ def build_reminders_keyboard(deadlines) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def build_settings_keyboard(subscribed: bool, auto_delete: bool) -> InlineKeyboardMarkup:
+def build_settings_keyboard(subscribed: bool) -> InlineKeyboardMarkup:
     notify = "🔔 Уведомления: включены" if subscribed else "🔕 Уведомления: выключены"
-    auto = "⏱ Автоудаление: Вкл" if auto_delete else "⏱ Автоудаление: Выкл"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=notify, callback_data="set:notify")],
-            [InlineKeyboardButton(text=auto, callback_data="set:autodel")],
             [InlineKeyboardButton(text="🤫 Секретный гайд", callback_data="set:guide")],
             [InlineKeyboardButton(text="⬅️ Назад в профиль", callback_data="prof:back")],
         ]

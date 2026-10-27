@@ -20,9 +20,8 @@ from keyboards.profile import (
     build_reminders_keyboard,
     build_settings_keyboard,
     build_support_keyboard,
-    build_teachers_keyboard,
 )
-from services import chatlog, formatting
+from services import formatting
 from utils import now, parse_due_datetime
 
 router = Router()
@@ -107,10 +106,21 @@ async def _user_role(telegram_id: int) -> bool:
     return bool(user and user.is_teacher)
 
 
-async def _teachers_text() -> str:
-    """Каталог преподавателей из расписания (данные приходят из Excel)."""
+async def _teachers_text(telegram_id: int) -> str:
+    """Преподаватели из спарсенного расписания группы пользователя.
+
+    Берём пары текущей группы (данные приходят из Excel с Яндекс.Диска),
+    собираем уникальных преподавателей с их предметами и кабинетами.
+    """
     async with SessionLocal() as session:
-        catalog = await crud.list_teacher_catalog(session)
+        user = await crud.get_user(session, telegram_id)
+        group = user.group if user else None
+        if not group:
+            return (
+                "👨‍🏫 <b>Преподаватели</b>\n\n"
+                "Сначала выбери группу: /start → специальность → группа."
+            )
+        catalog = await crud.list_teacher_catalog(session, group=group)
     return formatting.format_teachers(catalog)
 
 
@@ -120,25 +130,16 @@ async def _answer_tracked(
     *,
     reply_markup=None,
     parse_mode: str = "HTML",
-    telegram_id: int | None = None,
     menu: bool = True,
 ) -> None:
-    """Ответ с автоудалением предыдущих сообщений (если включено) и трекингом.
-
-    telegram_id передаём явно: у callback.message.from_user — это сам бот.
-    При автоудалении обязательно заново прикрепляем Reply-меню, иначе
-    клавиатура пропадает на части клиентов.
-    """
-    uid = telegram_id if telegram_id is not None else message.from_user.id
-    await chatlog.auto_clean(message.chat.id, uid, message.bot)
-    sent = await message.answer(
+    """Ответ с прикреплением Reply-меню, если не задана inline-клавиатура."""
+    await message.answer(
         text,
         parse_mode=parse_mode,
         reply_markup=reply_markup if reply_markup is not None else (
             build_main_menu() if menu else None
         ),
     )
-    await chatlog.track(message.chat.id, sent)
 
 
 async def _refresh_profile(message: Message, telegram_id: int, username: str | None) -> None:
@@ -305,25 +306,21 @@ async def cb_profile_settings(callback: CallbackQuery) -> None:
             session, callback.from_user.id, username=callback.from_user.username
         )
         subscribed = user.subscribed
-        auto_delete = user.auto_delete
         await session.commit()
 
     await callback.answer()
     await _answer_tracked(
         callback.message,
-        _settings_text(subscribed, auto_delete),
-        reply_markup=build_settings_keyboard(subscribed, auto_delete),
-        telegram_id=callback.from_user.id,
+        _settings_text(subscribed),
+        reply_markup=build_settings_keyboard(subscribed),
     )
 
 
-def _settings_text(subscribed: bool, auto_delete: bool) -> str:
+def _settings_text(subscribed: bool) -> str:
     notify = "включены 🔔" if subscribed else "выключены 🔕"
-    auto = "вкл" if auto_delete else "выкл"
     return (
         "⚙️ <b>Настройки</b>\n\n"
-        f"🔔 Уведомления о расписании: {notify}\n"
-        f"⏱ Автоудаление сообщений: {auto}"
+        f"🔔 Уведомления о расписании: {notify}"
     )
 
 
@@ -335,43 +332,20 @@ async def cb_set_notify(callback: CallbackQuery) -> None:
         )
         user.subscribed = not user.subscribed
         subscribed = user.subscribed
-        auto_delete = user.auto_delete
         await session.commit()
 
     await callback.answer()
     await _answer_tracked(
         callback.message,
-        _settings_text(subscribed, auto_delete),
-        reply_markup=build_settings_keyboard(subscribed, auto_delete),
-        telegram_id=callback.from_user.id,
-    )
-
-
-@router.callback_query(F.data == "set:autodel")
-async def cb_set_autodel(callback: CallbackQuery) -> None:
-    async with SessionLocal() as session:
-        user = await crud.get_or_create_user(
-            session, callback.from_user.id, username=callback.from_user.username
-        )
-        user.auto_delete = not user.auto_delete
-        auto_delete = user.auto_delete
-        subscribed = user.subscribed
-        await session.commit()
-
-    word = "включено" if auto_delete else "выключено"
-    await callback.answer(f"Автоудаление: {word}")
-    await _answer_tracked(
-        callback.message,
-        _settings_text(subscribed, auto_delete),
-        reply_markup=build_settings_keyboard(subscribed, auto_delete),
-        telegram_id=callback.from_user.id,
+        _settings_text(subscribed),
+        reply_markup=build_settings_keyboard(subscribed),
     )
 
 
 @router.callback_query(F.data == "set:guide")
 async def cb_set_guide(callback: CallbackQuery) -> None:
     await callback.answer()
-    await _answer_tracked(callback.message, GUIDE_TEXT, telegram_id=callback.from_user.id)
+    await _answer_tracked(callback.message, GUIDE_TEXT)
 
 
 # --- преподаватели ----------------------------------------------------------
@@ -379,12 +353,10 @@ async def cb_set_guide(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "teachers:list")
 async def cb_teachers(callback: CallbackQuery) -> None:
-    text = await _teachers_text()
+    text = await _teachers_text(callback.from_user.id)
     await callback.answer()
-    try:
-        await callback.message.edit_text(text, reply_markup=build_teachers_keyboard())
-    except Exception:
-        await callback.message.answer(text, reply_markup=build_teachers_keyboard())
+    # Reply-меню обязательно: чтобы меню внизу не пропадало
+    await callback.message.answer(text, reply_markup=build_main_menu())
 
 
 # --- долги ------------------------------------------------------------------

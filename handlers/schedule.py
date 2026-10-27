@@ -9,7 +9,7 @@ from db import SessionLocal
 from db import crud
 from keyboards.groups import build_specialties_keyboard
 from keyboards.menu import BTN_BELLS, BTN_NOW, BTN_TODAY, BTN_TOMORROW, build_main_menu
-from services import chatlog, formatting, watcher
+from services import formatting, watcher
 from utils import now, today_ddmm, tomorrow_ddmm, week_days
 
 logger = logging.getLogger(__name__)
@@ -30,15 +30,13 @@ async def _require_group(message: Message) -> str | None:
 
 
 async def _send(message: Message, text: str, *, menu: bool = True) -> None:
-    """Отправка с автоудалением прошлых ответов и закреплением меню."""
-    await chatlog.auto_clean(message.chat.id, message.from_user.id, message.bot)
+    """Отправка текста с закреплением Reply-меню."""
     for chunk in formatting.split_message(text):
-        sent = await message.answer(
+        await message.answer(
             chunk,
             parse_mode="HTML",
             reply_markup=build_main_menu() if menu else None,
         )
-        await chatlog.track(message.chat.id, sent)
 
 
 async def _load(date: str, group: str):
