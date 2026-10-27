@@ -1,4 +1,4 @@
-"""Профиль, избранные группы, долги, напоминания, настройки и поддержка."""
+"""Профиль, преподаватели, долги, напоминания, настройки и поддержка."""
 import html
 from datetime import datetime
 
@@ -16,12 +16,11 @@ from keyboards.groups import build_specialties_keyboard
 from keyboards.menu import build_main_menu
 from keyboards.profile import (
     build_debts_keyboard,
-    build_favorites_keyboard,
     build_profile_keyboard,
     build_reminders_keyboard,
     build_settings_keyboard,
-    build_slot_keyboard,
     build_support_keyboard,
+    build_teachers_keyboard,
 )
 from services import chatlog, formatting
 from utils import now, parse_due_datetime
@@ -108,10 +107,11 @@ async def _user_role(telegram_id: int) -> bool:
     return bool(user and user.is_teacher)
 
 
-async def _favorites_text(telegram_id: int) -> str:
+async def _teachers_text() -> str:
+    """Каталог преподавателей из расписания (данные приходят из Excel)."""
     async with SessionLocal() as session:
-        favorites = await crud.get_favorites(session, telegram_id)
-    return formatting.format_favorites(favorites)
+        catalog = await crud.list_teacher_catalog(session)
+    return formatting.format_teachers(catalog)
 
 
 async def _answer_tracked(
@@ -227,7 +227,9 @@ async def cmd_support(message: Message) -> None:
 async def cb_sup_report(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(ProfileStates.support_report)
     await callback.answer()
-    await callback.message.answer("Опиши проблему одним сообщением:")
+    await callback.message.answer(
+        "Опиши проблему одним сообщением:", reply_markup=build_main_menu()
+    )
 
 
 @router.message(ProfileStates.support_report)
@@ -237,7 +239,9 @@ async def on_support_report(message: Message, state: FSMContext, bot) -> None:
     text = (message.text or "").strip()
     await state.clear()
     if not text:
-        await message.answer("Пустой текст. Попробуй ещё раз: /support")
+        await message.answer(
+            "Пустой текст. Попробуй ещё раз: /support", reply_markup=build_main_menu()
+        )
         return
 
     user = message.from_user
@@ -249,11 +253,18 @@ async def on_support_report(message: Message, state: FSMContext, bot) -> None:
     )
     if settings.ADMIN_ID:
         try:
-            await bot.send_message(settings.ADMIN_ID, report)
+            await bot.send_message(
+                settings.ADMIN_ID, report, reply_markup=build_main_menu()
+            )
         except Exception:
-            await message.answer("Не удалось переслать сообщение админу. Попробуй позже.")
+            await message.answer(
+                "Не удалось переслать сообщение админу. Попробуй позже.",
+                reply_markup=build_main_menu(),
+            )
             return
-    await message.answer("✅ Сообщение переслано админу. Спасибо!")
+    await message.answer(
+        "✅ Сообщение переслано админу. Спасибо!", reply_markup=build_main_menu()
+    )
 
 
 # --- профиль: inline-кнопки ------------------------------------------------
@@ -363,92 +374,17 @@ async def cb_set_guide(callback: CallbackQuery) -> None:
     await _answer_tracked(callback.message, GUIDE_TEXT, telegram_id=callback.from_user.id)
 
 
-# --- избранные --------------------------------------------------------------
+# --- преподаватели ----------------------------------------------------------
 
 
-@router.callback_query(F.data == "fav:list")
-async def cb_fav_list(callback: CallbackQuery) -> None:
-    async with SessionLocal() as session:
-        favorites = await crud.get_favorites(session, callback.from_user.id)
-    text = await _favorites_text(callback.from_user.id)
+@router.callback_query(F.data == "teachers:list")
+async def cb_teachers(callback: CallbackQuery) -> None:
+    text = await _teachers_text()
     await callback.answer()
     try:
-        await callback.message.edit_text(text, reply_markup=build_favorites_keyboard(favorites))
+        await callback.message.edit_text(text, reply_markup=build_teachers_keyboard())
     except Exception:
-        await callback.message.answer(text, reply_markup=build_favorites_keyboard(favorites))
-
-
-@router.callback_query(F.data.startswith("fav:slot:"))
-async def cb_fav_slot(callback: CallbackQuery) -> None:
-    slot = int(callback.data.split(":")[2])
-
-    async with SessionLocal() as session:
-        user = await crud.get_or_create_user(
-            session, callback.from_user.id, username=callback.from_user.username
-        )
-        current_group = user.group
-        favorites = await crud.get_favorites(session, callback.from_user.id)
-        slot_group = favorites.get(slot)
-
-        if slot_group:
-            await callback.answer()
-            await callback.message.answer(
-                f"⭐ Слот {slot}: <b>{_esc(slot_group)}</b>\n\nЧто сделать?",
-                reply_markup=build_slot_keyboard(slot, slot_group),
-            )
-            return
-
-        if not current_group:
-            await callback.answer()
-            await callback.message.answer(
-                "Сначала выбери группу: /start или 👤 Профиль → «Сменить группу»."
-            )
-            return
-
-        await crud.set_favorite(session, callback.from_user.id, slot, current_group)
-        await session.commit()
-        favorites = await crud.get_favorites(session, callback.from_user.id)
-
-    text = await _favorites_text(callback.from_user.id)
-    await callback.answer(f"Группа {current_group} сохранена в слот {slot}")
-    try:
-        await callback.message.edit_text(text, reply_markup=build_favorites_keyboard(favorites))
-    except Exception:
-        await callback.message.answer(text, reply_markup=build_favorites_keyboard(favorites))
-
-
-@router.callback_query(F.data.startswith("fav:usegroup:"))
-async def cb_fav_use(callback: CallbackQuery) -> None:
-    slot = int(callback.data.split(":")[2])
-
-    async with SessionLocal() as session:
-        favorites = await crud.get_favorites(session, callback.from_user.id)
-        group = favorites.get(slot)
-        if not group:
-            await callback.answer("Слот пуст", show_alert=True)
-            return
-        await crud.set_group(session, callback.from_user.id, group)
-        await session.commit()
-
-    await callback.answer(f"Текущая группа: {group}")
-    await callback.message.answer(f"✅ Текущая группа: <b>{_esc(group)}</b>")
-
-
-@router.callback_query(F.data.startswith("fav:clear:"))
-async def cb_fav_clear(callback: CallbackQuery) -> None:
-    slot = int(callback.data.split(":")[2])
-
-    async with SessionLocal() as session:
-        await crud.clear_favorite(session, callback.from_user.id, slot)
-        await session.commit()
-        favorites = await crud.get_favorites(session, callback.from_user.id)
-
-    text = await _favorites_text(callback.from_user.id)
-    await callback.answer(f"Слот {slot} очищен")
-    try:
-        await callback.message.edit_text(text, reply_markup=build_favorites_keyboard(favorites))
-    except Exception:
-        await callback.message.answer(text, reply_markup=build_favorites_keyboard(favorites))
+        await callback.message.answer(text, reply_markup=build_teachers_keyboard())
 
 
 # --- долги ------------------------------------------------------------------
@@ -469,7 +405,10 @@ async def cb_debt_noop(callback: CallbackQuery) -> None:
 async def cb_debt_add(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(ProfileStates.debt_text)
     await callback.answer()
-    await callback.message.answer("Введи текст долга (например, «Сдать лабу по физике»):")
+    await callback.message.answer(
+        "Введи текст долга (например, «Сдать лабу по физике»):",
+        reply_markup=build_main_menu(),
+    )
 
 
 @router.message(ProfileStates.debt_text)
@@ -479,7 +418,9 @@ async def on_debt_text(message: Message, state: FSMContext) -> None:
     text = (message.text or "").strip()
     await state.clear()
     if not text:
-        await message.answer("Пустой текст — долг не добавлен.")
+        await message.answer(
+            "Пустой текст — долг не добавлен.", reply_markup=build_main_menu()
+        )
         return
 
     async with SessionLocal() as session:
@@ -527,7 +468,10 @@ async def cb_dl_list(callback: CallbackQuery) -> None:
 async def cb_dl_add(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(ProfileStates.deadline_text)
     await callback.answer()
-    await callback.message.answer("Введи текст задачи (например, «Сдать лабу по физике»):")
+    await callback.message.answer(
+        "Введи текст задачи (например, «Сдать лабу по физике»):",
+        reply_markup=build_main_menu(),
+    )
 
 
 @router.message(ProfileStates.deadline_text)
@@ -537,12 +481,15 @@ async def on_dl_text(message: Message, state: FSMContext) -> None:
     text = (message.text or "").strip()
     if not text:
         await state.clear()
-        await message.answer("Пустой текст — напоминание не добавлено.")
+        await message.answer(
+            "Пустой текст — напоминание не добавлено.", reply_markup=build_main_menu()
+        )
         return
     await state.update_data(dl_text=text[:512])
     await state.set_state(ProfileStates.deadline_when)
     await message.answer(
-        "Когда напоминание? Формат: <code>31.10.2026 18:00</code> (или <code>31.10 18:00</code>)"
+        "Когда напоминание? Формат: <code>31.10.2026 18:00</code> (или <code>31.10 18:00</code>)",
+        reply_markup=build_main_menu(),
     )
 
 
@@ -554,7 +501,8 @@ async def on_dl_when(message: Message, state: FSMContext) -> None:
     due = parse_due_datetime(raw)
     if due is None:
         await message.answer(
-            "Не понял дату. Формат: <code>31.10.2026 18:00</code> (или <code>31.10 18:00</code>). Попробуй ещё раз."
+            "Не понял дату. Формат: <code>31.10.2026 18:00</code> (или <code>31.10 18:00</code>). Попробуй ещё раз.",
+            reply_markup=build_main_menu(),
         )
         return
 
@@ -568,6 +516,7 @@ async def on_dl_when(message: Message, state: FSMContext) -> None:
 
     when = due.strftime("%d.%m.%Y %H:%M")
     await message.answer(
-        f"⏰ Напоминание добавлено: {when} — {_esc(text)}\nНапомню ровно в это время."
+        f"⏰ Напоминание добавлено: {when} — {_esc(text)}\nНапомню ровно в это время.",
+        reply_markup=build_main_menu(),
     )
     await _send_reminders(message, message.from_user.id)

@@ -17,6 +17,7 @@ from keyboards.menu import (
     BTN_TODAY,
     BTN_TOMORROW,
     MENU_BUTTONS,
+    build_main_menu,
 )
 
 
@@ -55,6 +56,6 @@ async def cancel_fsm_on_menu(message: Message, state: FSMContext) -> bool:
     if not message.text or message.text not in MENU_BUTTONS:
         return False
     await state.clear()
-    await message.answer("Действие отменено.")
+    await message.answer("Действие отменено.", reply_markup=build_main_menu())
     await dispatch_menu_button(message)
     return True

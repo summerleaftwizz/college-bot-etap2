@@ -1,7 +1,7 @@
-"""Старт бота, выбор группы в два шага и режим преподавателя."""
+"""Старт бота, подписка на канал, выбор группы в два шага и режим преподавателя."""
 import html
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -16,8 +16,15 @@ from keyboards.groups import (
     specialty_of,
 )
 from keyboards.menu import build_main_menu
+from keyboards.subscribe import build_subscribe_keyboard
+from services import subscription
 
 router = Router()
+
+SUBSCRIBE_TEXT = (
+    "👋 Привет, я бот для расписания КГТТ!\n\n"
+    "🚀 Пожалуйста, подпишитесь для доступа к возможностям бота."
+)
 
 WELCOME_TEXT = (
     "⭐ Расписание КГТТ\n\n"
@@ -51,18 +58,20 @@ def _specialties_text() -> str:
     return WELCOME_TEXT
 
 
-@router.message(CommandStart())
-async def cmd_start(message: Message) -> None:
-    async with SessionLocal() as session:
-        user = await crud.get_or_create_user(
-            session, message.from_user.id, username=message.from_user.username
-        )
-        group = user.group
-        is_teacher = user.is_teacher
-        await session.commit()
+async def _show_welcome(message: Message, telegram_id: int | None = None) -> None:
+    """Стандартное приветствие: меню для выбравших группу, иначе специальности.
 
-    if group or is_teacher:
-        await message.answer(WELCOME_TEXT, parse_mode="HTML", reply_markup=build_main_menu())
+    telegram_id нужен явно для callback: у callback.message.from_user — сам бот.
+    """
+    uid = telegram_id if telegram_id is not None else message.from_user.id
+
+    async with SessionLocal() as session:
+        user = await crud.get_user(session, uid)
+
+    if user is not None and (user.group or user.is_teacher):
+        await message.answer(
+            WELCOME_TEXT, parse_mode="HTML", reply_markup=build_main_menu()
+        )
         return
 
     async with SessionLocal() as session:
@@ -72,11 +81,59 @@ async def cmd_start(message: Message) -> None:
         await message.answer(
             "Расписание ещё не загружено. Как только появится первый файл — "
             "сможешь выбрать специальность и группу.",
+            parse_mode="HTML",
             reply_markup=build_specialties_keyboard(),
         )
         return
 
-    await message.answer(WELCOME_TEXT, parse_mode="HTML", reply_markup=build_specialties_keyboard())
+    await message.answer(
+        WELCOME_TEXT, parse_mode="HTML", reply_markup=build_specialties_keyboard()
+    )
+
+
+@router.message(CommandStart())
+async def cmd_start(message: Message, bot: Bot) -> None:
+    if not await subscription.is_subscribed(bot, message.from_user.id):
+        await message.answer(
+            SUBSCRIBE_TEXT,
+            parse_mode="HTML",
+            reply_markup=build_subscribe_keyboard(),
+        )
+        return
+
+    async with SessionLocal() as session:
+        await crud.get_or_create_user(
+            session, message.from_user.id, username=message.from_user.username
+        )
+        await session.commit()
+
+    await _show_welcome(message)
+
+
+# --- проверка подписки -----------------------------------------------------
+
+
+@router.callback_query(F.data == "sub:check")
+async def cb_check_subscription(callback: CallbackQuery, bot: Bot) -> None:
+    if not await subscription.is_subscribed(bot, callback.from_user.id):
+        await callback.answer("Вы еще не подписались", show_alert=True)
+        return
+
+    await callback.answer("Подписка подтверждена ✅")
+    try:
+        if callback.message:
+            await callback.message.delete()
+    except Exception:
+        pass
+
+    async with SessionLocal() as session:
+        await crud.get_or_create_user(
+            session, callback.from_user.id, username=callback.from_user.username
+        )
+        await session.commit()
+
+    if callback.message:
+        await _show_welcome(callback.message, callback.from_user.id)
 
 
 # --- шаг 1: специальность --------------------------------------------------
@@ -144,7 +201,8 @@ async def on_teacher_start(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     if callback.message:
         await callback.message.answer(
-            "Напиши свою фамилию (как в расписании), и я запомню её:"
+            "Напиши свою фамилию (как в расписании), и я запомню её:",
+            reply_markup=build_main_menu(),
         )
 
 
@@ -155,7 +213,10 @@ async def on_teacher_name(message: Message, state: FSMContext) -> None:
 
     name = (message.text or "").strip()
     if len(name) < 2:
-        await message.answer("Фамилия слишком короткая. Напиши ещё раз:")
+        await message.answer(
+            "Фамилия слишком короткая. Напиши ещё раз:",
+            reply_markup=build_main_menu(),
+        )
         return
 
     await state.clear()

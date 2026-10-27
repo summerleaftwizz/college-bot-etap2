@@ -11,6 +11,7 @@
 import asyncio
 import logging
 import re
+from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from typing import Optional
 
@@ -20,6 +21,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramFor
 from config import settings
 from db import SessionLocal
 from db import crud
+from keyboards.menu import build_main_menu
 from services import formatting, parser
 from services.parser import ParseError
 from services.yadisk import YaDiskClient
@@ -51,7 +53,9 @@ async def _mark_user_inactive(telegram_id: int) -> None:
 
 async def _send(bot: Bot, telegram_id: int, text: str) -> bool:
     try:
-        await bot.send_message(telegram_id, text, parse_mode="HTML")
+        await bot.send_message(
+            telegram_id, text, parse_mode="HTML", reply_markup=build_main_menu()
+        )
         return True
     except (TelegramForbiddenError, TelegramBadRequest):
         # пользователь заблокировал бота / чат не найден / аккаунт удалён
@@ -148,7 +152,10 @@ async def _process_file(
                     "subject": l.subject,
                     "room": l.room,
                     "teacher": l.teacher,
-                    "subgroups": list(l.subgroups or []),
+                    "subgroups": [
+                        asdict(s) if is_dataclass(s) and not isinstance(s, type) else s
+                        for s in (l.subgroups or [])
+                    ],
                 }
                 for l in lessons
             ]

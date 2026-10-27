@@ -22,7 +22,9 @@ async def _require_group(message: Message) -> str | None:
     async with SessionLocal() as session:
         user = await crud.get_user(session, message.from_user.id)
     if not user or (not user.group and not user.is_teacher):
-        await message.answer("Сначала выбери группу: /start")
+        await message.answer(
+            "Сначала выбери группу: /start", reply_markup=build_main_menu()
+        )
         return None
     return user.group
 
@@ -88,7 +90,9 @@ async def _day_text(message: Message, bot: Bot, label: str, empty_text: str, *, 
     async with SessionLocal() as session:
         user = await crud.get_user(session, message.from_user.id)
     if user is None or (not user.group and not user.is_teacher):
-        await message.answer("Сначала выбери группу: /start")
+        await message.answer(
+            "Сначала выбери группу: /start", reply_markup=build_main_menu()
+        )
         return None
 
     if user.is_teacher:
@@ -138,7 +142,9 @@ async def cmd_week(message: Message) -> None:
     async with SessionLocal() as session:
         user = await crud.get_user(session, message.from_user.id)
     if user is None or (not user.group and not user.is_teacher):
-        await message.answer("Сначала выбери группу: /start")
+        await message.answer(
+            "Сначала выбери группу: /start", reply_markup=build_main_menu()
+        )
         return
 
     sent = 0
@@ -163,7 +169,9 @@ async def cmd_week(message: Message) -> None:
         await _send(message, text)
         sent += 1
     if sent == 0:
-        await message.answer("Расписание на неделю пока не загружено.")
+        await message.answer(
+            "Расписание на неделю пока не загружено.", reply_markup=build_main_menu()
+        )
 
 
 # --- кнопки главного меню (реагируют на ТЕКСТ кнопки) -----------------------
@@ -184,7 +192,9 @@ async def btn_now(message: Message, bot: Bot) -> None:
     async with SessionLocal() as session:
         user = await crud.get_user(session, message.from_user.id)
     if user is None or (not user.group and not user.is_teacher):
-        await message.answer("Сначала выбери группу: /start")
+        await message.answer(
+            "Сначала выбери группу: /start", reply_markup=build_main_menu()
+        )
         return
 
     label = today_ddmm()
@@ -209,7 +219,8 @@ async def btn_bells(message: Message) -> None:
 @router.message(Command("change_group"))
 async def cmd_change_group(message: Message) -> None:
     await message.answer(
-        "Выбери специальность 👇", reply_markup=build_specialties_keyboard()
+        "Выбери специальность 👇",
+        reply_markup=build_specialties_keyboard(),
     )
 
 
@@ -219,7 +230,8 @@ async def cmd_subscribe(message: Message) -> None:
         await crud.set_subscribed(session, message.from_user.id, True)
         await session.commit()
     await message.answer(
-        "🔔 Готово! Теперь я буду присылать уведомление, когда появится новое расписание."
+        "🔔 Готово! Теперь я буду присылать уведомление, когда появится новое расписание.",
+        reply_markup=build_main_menu(),
     )
 
 
@@ -230,5 +242,6 @@ async def cmd_unsubscribe(message: Message) -> None:
         await session.commit()
     await message.answer(
         "🔕 Уведомления о расписании выключены. "
-        "Расписание можно посмотреть кнопками «Сегодня» и «Завтра»."
+        "Расписание можно посмотреть кнопками «Сегодня» и «Завтра».",
+        reply_markup=build_main_menu(),
     )

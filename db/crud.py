@@ -1,5 +1,6 @@
 """Функции доступа к БД. Все операции асинхронные, принимают готовую сессию."""
 import json
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -176,6 +177,44 @@ async def get_groups(session: AsyncSession) -> list[str]:
         select(models.ScheduleEntry.group).distinct().order_by(models.ScheduleEntry.group)
     )
     return list(res.scalars())
+
+
+async def list_teacher_catalog(
+    session: AsyncSession,
+) -> list[tuple[str, str, str]]:
+    """Каталог преподавателей из расписания: [(ФИО, предмет, кабинет), …].
+
+    Уникальные комбинации, ФИО без дубликатов-пробелов, отсортировано
+    по алфавиту. Включает и преподавателей из подгрупп (JSON-поле).
+    """
+    res = await session.execute(
+        select(
+            models.ScheduleEntry.teacher,
+            models.ScheduleEntry.subject,
+            models.ScheduleEntry.room,
+            models.ScheduleEntry.subgroups,
+        )
+    )
+    seen: set[tuple[str, str, str]] = set()
+    for teacher, subject, room, subgroups_json in res.all():
+        subject = (subject or "").strip()
+        room = (room or "").strip()
+        teacher = re.sub(r"\s+", " ", (teacher or "")).strip()
+        if teacher and subject:
+            seen.add((teacher, subject, room))
+        if subgroups_json:
+            try:
+                data = json.loads(subgroups_json)
+            except (TypeError, ValueError):
+                data = []
+            if isinstance(data, list):
+                for sub in data:
+                    sub_teacher = re.sub(
+                        r"\s+", " ", str(sub.get("teacher") or "")
+                    ).strip() if isinstance(sub, dict) else ""
+                    if sub_teacher and subject:
+                        seen.add((sub_teacher, subject, (sub.get("room") or "").strip()))
+    return sorted(seen, key=lambda t: t[0])
 
 
 async def get_schedule(session: AsyncSession, date: str, group: str) -> list[models.ScheduleEntry]:
