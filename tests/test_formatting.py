@@ -235,51 +235,69 @@ def test_split_message_long():
 
 
 def test_subgroups_rendered_as_separate_lines():
-    """Подгруппы: отдельные строки «1 п/г · ауд. 121 · ФИО», не склейка в 📚."""
+    """2+ подгруппы: отдельные строки «N п/г · ауд. X · ФИО»."""
     e = entry(3, subject="Иностранный язык")
-    e.subgroups = [{"room": "121", "teacher": "Платицына Е. В."},
-                   {"room": "202", "teacher": "Байшева Я. В."}]
+    e.subgroups = [{"number": 1, "room": "121", "teacher": "Платицына Е. В."},
+                   {"number": 2, "room": "202", "teacher": "Байшева Я. В."}]
     text = format_schedule("26.10", "1ИСИП-25-9", [e])
     assert "📚 Иностранный язык" in text
     assert "1 п/г · ауд. 121 · Платицына Е. В." in text
     assert "2 п/г · ауд. 202 · Байшева Я. В." in text
 
 
-def test_subgroups_dirty_room_cells():
-    """«Ино... 319» / «ауд. 202» приводятся к «ауд. 319» / «ауд. 202»."""
-    e = entry(3, subject="Иностранный язык в профессиональной деятельности")
-    e.subgroups = [{"room": "Ино... 319", "teacher": "Кобзова С. В."},
-                   {"room": "ауд. 202", "teacher": "Ощепкова А. С."}]
+def test_subgroups_dataclass_objects():
+    """SubgroupInfo (датакласс) тоже печатается — как из парсера."""
+    from services.parser import SubgroupInfo
+    e = entry(3, subject="Иностранный язык")
+    e.subgroups = [SubgroupInfo(1, "319", "Кобзова С. В."),
+                   SubgroupInfo(2, "202", "Ощепкова А. С.")]
     text = format_schedule("26.10", "1ИСИП-25-9", [e])
-    assert ("📚 Иностранный язык в профессиональной деятельности") in text
     assert "1 п/г · ауд. 319 · Кобзова С. В." in text
     assert "2 п/г · ауд. 202 · Ощепкова А. С." in text
 
 
-def test_subgroups_single_missing_second():
-    """Одна подгруппа + пометка «у 2 подгруппы пары нет»."""
-    e = entry(3, subject="Иностранный язык")
-    e.subgroups = [{"room": "121", "teacher": "Платицына Е. В."}]
+def test_subgroups_dirty_room_cells():
+    """«Ино... 319» / «ауд. 202» приводятся к «ауд. 319» / «ауд. 202»."""
+    e = entry(3, subject="Иностранный язык в профессиональной деятельности")
+    e.subgroups = [{"number": 1, "room": "Ино... 319", "teacher": "Кобзова С. В."},
+                   {"number": 2, "room": "ауд. 202", "teacher": "Ощепкова А. С."}]
     text = format_schedule("26.10", "1ИСИП-25-9", [e])
-    assert "1 п/г · ауд. 121 · Платицына Е. В. (<i>у 2 подгруппы пары нет</i>)" in text
+    assert "📚 Иностранный язык в профессиональной деятельности" in text
+    assert "1 п/г · ауд. 319 · Кобзова С. В." in text
+    assert "2 п/г · ауд. 202 · Ощепкова А. С." in text
 
 
-def test_subgroups_missing_pair_line():
-    """Подгруппа без кабинета и ФИО → «N п/г · пары нет»."""
-    e = entry(3, subject="Иностранный язык")
-    e.subgroups = [{"room": "121", "teacher": "Платицына Е. В."},
-                   {"room": "", "teacher": ""}]
+def test_single_subgroup_uses_plain_format():
+    """Одна подгруппа → обычный формат без «п/г» и без дублей."""
+    e = entry(3, subject="Иностранный язык", room="319", teacher="Кобзова С. В.")
+    e.subgroups = [{"number": 1, "room": "319", "teacher": "Кобзова С. В."}]
     text = format_schedule("26.10", "1ИСИП-25-9", [e])
-    assert "2 п/г · <i>пары нет</i>" in text
+    assert "п/г" not in text
+    assert "🚪 каб. 319 · Кобзова С. В." in text
+
+
+def test_subgroups_missing_teacher_part():
+    """Нет преподавателя — строка без «None» и без висящего разделителя."""
+    e = entry(3, subject="Иностранный язык")
+    e.subgroups = [{"number": 1, "room": "319", "teacher": "Кобзова С. В."},
+                   {"number": 2, "room": "202", "teacher": None}]
+    text = format_schedule("26.10", "1ИСИП-25-9", [e])
+    assert "2 п/г · ауд. 202" in text
+    assert "None" not in text
+    assert "2 п/г · ауд. 202 ·" not in text
 
 
 def test_subgroups_json_string_from_db():
     """entry.subgroups приходит из БД JSON-строкой — парсится корректно."""
     e = entry(3, subject="Иностранный язык")
-    e.subgroups = json.dumps([{"room": "121", "teacher": "Ощепкова А. С."}],
-                             ensure_ascii=False)
+    e.subgroups = json.dumps(
+        [{"number": 1, "room": "319", "teacher": "Кобзова С. В."},
+         {"number": 2, "room": "202", "teacher": "Ощепкова А. С."}],
+        ensure_ascii=False,
+    )
     text = format_schedule("26.10", "1ИСИП-25-9", [e])
-    assert "1 п/г · ауд. 121 · Ощепкова А. С." in text
+    assert "1 п/г · ауд. 319 · Кобзова С. В." in text
+    assert "2 п/г · ауд. 202 · Ощепкова А. С." in text
 
 
 def test_no_subgroups_field_is_ok():

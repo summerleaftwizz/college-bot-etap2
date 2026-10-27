@@ -11,6 +11,7 @@
 import asyncio
 import logging
 import re
+from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from typing import Optional
 
@@ -148,7 +149,10 @@ async def _process_file(
                     "subject": l.subject,
                     "room": l.room,
                     "teacher": l.teacher,
-                    "subgroups": list(l.subgroups or []),
+                    "subgroups": [
+                        asdict(s) if is_dataclass(s) and not isinstance(s, type) else s
+                        for s in (l.subgroups or [])
+                    ],
                 }
                 for l in lessons
             ]

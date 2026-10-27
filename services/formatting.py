@@ -210,9 +210,8 @@ def _room_text(room) -> str:
     return f"каб. {esc(r)}"
 
 
-def _subgroups_of(entry) -> list[dict]:
-    """Достаёт подгруппы пары (список {'room':…, 'teacher':…}) — из атрибута
-    или из JSON-строки, как она хранится в БД."""
+def _subgroups_of(entry) -> list:
+    """Подгруппы пары: список SubgroupInfo/словарей — из атрибута или JSON из БД."""
     raw = getattr(entry, "subgroups", None)
     if not raw:
         return []
@@ -225,49 +224,55 @@ def _subgroups_of(entry) -> list[dict]:
     return list(raw)
 
 
+def _sub_value(sub, key: str, default=""):
+    """Достаёт поле подгруппы из словаря или датакласса."""
+    if isinstance(sub, dict):
+        return sub.get(key, default)
+    return getattr(sub, key, default)
+
+
 def _subgroup_room(room) -> str:
-    """Аудитория подгруппы: 'Ино... 319' -> 'ауд. 319', '319' -> 'ауд. 319'."""
+    """Аудитория подгруппы: 'Ино 319' -> '319', '319' -> '319'."""
     r = (room or "").strip()
     if not r:
         return ""
     if r.lower() == "max":
         return "пара в максе"
-    # в ячейке бывает «Ино... 319» / «ауд. 319» / просто «319»: берём
-    # последний токен с цифрой, иначе оставляем текст как есть
-    tokens = r.split()
-    if len(tokens) > 1:
-        for tok in reversed(tokens):
-            if any(ch.isdigit() for ch in tok):
-                r = tok
-                break
     r = re.sub(r"^(?:ауд\.?|каб\.?)\s*", "", r, flags=re.IGNORECASE)
-    return f"ауд. {esc(r)}"
+    # «Ино 319» / «Ино... 319» -> «319»; без цифр оставляем как есть
+    m = re.search(r"\d+\s*[A-Za-zА-Яа-я]?", r)
+    if m and m.group(0).strip() != r:
+        r = m.group(0).strip()
+    return r
 
 
-def _subgroup_line(idx: int, sub: dict, total: int) -> str:
-    """'1 п/г · ауд. 121 · Платицына Е. В.'; пустая подгруппа — «пары нет»."""
+def _subgroup_line(number: int, sub) -> str:
+    """'1 п/г · ауд. 319 · Кобзова С. В.' — все значения из ячеек."""
     parts = []
-    room = _subgroup_room(sub.get("room") or "")
+    room = _subgroup_room(_sub_value(sub, "room"))
     if room:
-        parts.append(room)
-    teacher = (sub.get("teacher") or "").strip()
+        parts.append(f"ауд. {esc(room)}")
+    teacher = (_sub_value(sub, "teacher", "") or "").strip()
     if teacher:
         parts.append(esc(teacher))
     if not parts:
-        return f"{idx} п/г · <i>пары нет</i>"
-    return f"{idx} п/г · " + " · ".join(parts)
+        return f"{number} п/г · <i>пары нет</i>"
+    return f"{number} п/г · " + " · ".join(parts)
 
 
 def _subgroups_block(entry) -> list[str]:
-    """Строки подгрупп пары (1 п/г, 2 п/г, …)."""
+    """Отдельные строки для 2+ подгрупп; для одиночной пары — пусто.
+
+    Одиночная подгруппа выводится обычным форматом (📚 / 🚪 каб. · ФИО),
+    поэтому здесь её не дублируем.
+    """
     subs = _subgroups_of(entry)
-    if not subs:
+    if len(subs) < 2:
         return []
-    total = len(subs)
-    lines = [_subgroup_line(i, sub, total) for i, sub in enumerate(subs, 1)]
-    if total == 1:
-        # вторая подгруппа в файле не заполнена — сообщаем об этом явно
-        lines[0] += " (<i>у 2 подгруппы пары нет</i>)"
+    lines = []
+    for idx, sub in enumerate(subs, 1):
+        number = _sub_value(sub, "number", idx) or idx
+        lines.append(_subgroup_line(int(number), sub))
     return lines
 
 
@@ -305,7 +310,8 @@ def _render_lesson_block(entry, n: int, bells, teacher_mode: bool) -> str:
     lines.append(f"📚 {_lesson_subject(entry, teacher_mode)}")
     lines.extend(_subgroups_block(entry))
     place = _lesson_place(entry, teacher_mode)
-    if place and not _subgroups_of(entry):
+    # при разбивке на 2+ подгруппы место указано в строках подгрупп
+    if place and len(_subgroups_of(entry)) < 2:
         lines.append(place)
     return "<blockquote>" + "\n".join(lines) + "</blockquote>"
 

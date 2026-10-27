@@ -37,13 +37,22 @@ class ParseError(Exception):
 
 
 @dataclass
+class SubgroupInfo:
+    """Одна подгруппа пары: номер, аудитория и преподаватель из ячеек строки."""
+
+    number: int
+    room: Optional[str] = None
+    teacher: Optional[str] = None
+
+
+@dataclass
 class Lesson:
     lesson_number: int
     time: str
     subject: str
     room: str
     teacher: str = ""
-    # Подгруппы: [{"room": "121", "teacher": "Платицына Е. В."}, ...]
+    # Полный список подгрупп (для пар с разбивкой, например «Иностранный язык»).
     subgroups: list = field(default_factory=list)
 
 
@@ -131,72 +140,125 @@ def _is_group_name(value: str, cfg: ParserConfig) -> bool:
     return bool(value) and re.match(cfg.GROUP_NAME_PATTERN, value) is not None
 
 
+# ФИО: «Кобзова С. В.», «Ощепкова А.С.», «Иванов Иван И.»
+FIO_RE = re.compile(
+    r"^[А-ЯЁA-Z][а-яёa-z\-]+(?:\s+[А-ЯЁA-Z][а-яёa-z\-]+)?"
+    r"\s+[А-ЯЁA-Z]\.\s*[А-ЯЁA-Z]?\.?$"
+)
+# Аудитория: служебный префикс + номер («Ино 319» -> «319»)
+ROOM_NUMBER_RE = re.compile(r"\d+\s*[A-Za-zА-Яа-я]?")
+
+
 def _is_fio(value: str) -> bool:
-    """Похоже ли на ФИО: 'Платицына Е. В.', 'Байшева Я.В.', 'Иванов Иван'."""
-    words = value.split()
-    if not 2 <= len(words) <= 4:
+    """Похоже ли на ФИО в формате «Фамилия И. О.» (значение — из ячейки)."""
+    return bool(FIO_RE.match(_normalize_teacher(value)))
+
+
+def _clean_room(value: str) -> str:
+    """Убирает служебный префикс аудитории: «Ино 319» -> «319».
+
+    Если цифр нет («Спортзал», «Акт. зал») — возвращает строку как есть.
+    """
+    s = _normalize_teacher(value)
+    if not s:
+        return ""
+    m = ROOM_NUMBER_RE.search(s)
+    return m.group(0).strip() if m else s
+
+
+def _looks_like_data(value: str) -> bool:
+    """Ячейка похожа на данные пары (аудитория с цифрами или ФИО),
+    а не на название чужого предмета («Химия», «Математика»)."""
+    if not value:
         return False
-    # слово: фамилия/имя ИЛИ инициал («Е.»)
-    word = r"^[А-ЯЁA-Z](?:[А-ЯЁа-яёA-Za-z-]+\.?|\.)$"
-    return all(re.match(word, w) for w in words)
+    if _is_fio(value):
+        return True
+    return any(ch.isdigit() for ch in value)
 
 
 def _extract_subgroups(
-    df, r: int, sc: int, rc: int, block_end: int, lesson_col: int, cfg: ParserConfig,
-    max_col: int = 0,
-) -> list[dict]:
-    """Ищет подгруппы, читая ВСЕ колонки справа от названия предмета.
+    df, r: int, sc: int, block_end: int, lesson_col: int, cfg: ParserConfig,
+    stop_cols: frozenset = frozenset(),
+) -> list[SubgroupInfo]:
+    """Собирает подгруппы из ВСЕХ ячеек строки справа от названия предмета.
 
-    Формат «иностранного языка»: в одной строке идут подряд
-    предмет | кабинет 1 | ФИО 1 | кабинет 2 | ФИО 2 | …
-    Кабинеты и фамилии берутся динамически из ячеек — ничего не хардкодим.
-    Дополнительно читается строка-ФИО под парой (другой частый формат).
-    Окно ограничено колонкой следующей группы (max_col), чтобы не захватить
-    чужие данные; для последней группы — небольшим запасом вправо.
+    Формат: предмет | ауд. 1 | ФИО 1 | ауд. 2 | ФИО 2 | … — данные разных
+    подгрупп лежат в одной строке в разных колонках. Функция проходит по
+    всем колонкам до конца строки, классифицирует ячейки (ФИО или аудитория)
+    и группирует их в пары по порядку следования. Ранних выходов нет:
+    обрабатываются все пары, сколько бы их ни было.
+
+    stop_cols — колонки предметов ДРУГИХ групп. На такой колонке сканирование
+    прерывается, ЕСЛИ в ячейке лежит чужой предмет (текст без цифр и не ФИО).
+    Если же там аудитория (есть цифры) или ФИО — это данные нашей пары,
+    и чтение продолжается.
     """
     ncols = df.shape[1]
-    limit = min(ncols, max_col) if max_col else min(ncols, sc + 8)
+    has_teacher_row = (
+        r + 1 < block_end and _to_int(df.iat[r + 1, lesson_col]) is None
+    )
+    values: list[str] = []
+    empty_gap = 0
+    boundary = ncols
 
-    teacher_row = -1
-    if r + 1 < block_end and _to_int(df.iat[r + 1, lesson_col]) is None:
-        teacher_row = r + 1
+    for c in range(sc + 1, ncols):
+        cell = _cell_to_str(df.iat[r, c])
+        if c in stop_cols and not _looks_like_data(cell):
+            boundary = c
+            break
+        if cell and not _is_group_name(cell, cfg):
+            values.append(cell)
+            empty_gap = 0
+            continue
+        if has_teacher_row:
+            fio = _normalize_teacher(df.iat[r + 1, c])
+            if fio and _is_fio(fio):
+                values.append(fio)
+                empty_gap = 0
+                continue
+        empty_gap += 1
+        if values and empty_gap > 3:
+            boundary = c
+            break
 
-    subs: list[dict] = []
+    # группировка: аудитория открывает подгруппу, ФИО идёт в текущую
+    subs: list[SubgroupInfo] = []
+    current: Optional[SubgroupInfo] = None
 
-    def add_room(value: str) -> None:
-        value = value.strip()
-        if not value:
-            return
-        if subs and not subs[-1].get("room"):
-            subs[-1]["room"] = value
-        else:
-            subs.append({"room": value, "teacher": ""})
+    def flush() -> None:
+        nonlocal current
+        if current is not None and (current.room or current.teacher):
+            subs.append(current)
+        current = None
 
-    def add_teacher(value: str) -> None:
-        value = value.strip()
-        if not value:
-            return
-        if subs and not subs[-1].get("teacher"):
-            subs[-1]["teacher"] = value
-        else:
-            subs.append({"room": "", "teacher": value})
-
-    # идём по колонкам слева направо: ячейка пары и (если есть) ФИО под ней
-    for c in range(sc + 1, limit):
-        v = _cell_to_str(df.iat[r, c])
-        if teacher_row != -1:
-            vt = _normalize_teacher(df.iat[teacher_row, c])
-        else:
-            vt = ""
-        if v and not _is_group_name(v, cfg):
-            if _is_fio(v):
-                add_teacher(v)
+    for value in values:
+        if _is_fio(value):
+            if current is not None and not current.teacher:
+                current.teacher = value
             else:
-                add_room(v)
-        if vt and _is_fio(vt):
-            add_teacher(vt)
+                flush()
+                current = SubgroupInfo(number=0, teacher=value)
+        else:
+            if current is not None and not current.room:
+                current.room = _clean_room(value) or None
+            else:
+                flush()
+                current = SubgroupInfo(number=0, room=_clean_room(value) or None)
+    flush()
 
-    return [s for s in subs if s["room"] or s["teacher"]]
+    # если преподаватель так и не нашёлся в строке — пробуем строку под парой
+    if has_teacher_row and not any(s.teacher for s in subs):
+        teachers = [
+            _normalize_teacher(df.iat[r + 1, c]) for c in range(sc + 1, boundary)
+        ]
+        teachers = [t for t in teachers if t and _is_fio(t)]
+        for i, t in enumerate(teachers):
+            if i < len(subs) and not subs[i].teacher:
+                subs[i].teacher = t
+
+    for i, sub in enumerate(subs, 1):
+        sub.number = i
+    return subs
 
 
 def _parse_sheet(
@@ -233,46 +295,40 @@ def _parse_sheet(
                 if not name:
                     continue
                 subject = _cell_to_str(df.iat[r, sc])
-                room = _cell_to_str(df.iat[r, rc])
+                room = _clean_room(_cell_to_str(df.iat[r, rc]))
                 teacher = ""
                 if r + 1 < block_end and _to_int(df.iat[r + 1, lesson_col]) is None:
                     # следующая строка — ФИО преподавателя (в колонке предмета)
                     teacher = _normalize_teacher(df.iat[r + 1, sc])
-                # подгруппы: ячейки справа от предмета (иностранный язык и др.)
-                next_sc = pairs[gi + 1][0] if gi + 1 < len(pairs) else 0
-                subgroups = _extract_subgroups(
-                    df, r, sc, rc, block_end, lesson_col, cfg, max_col=next_sc
+                # подгруппы: все ячейки справа от предмета (иностранный язык и др.)
+                stop_cols = frozenset(
+                    other_sc for other_sc, _ in pairs[gi + 1:] if other_sc > sc
                 )
-                if len(subgroups) == 1:
-                    s0 = subgroups[0]
-                    # одиночный «кабинет = основной», без своего ФИО —
-                    # это обычная пара, а не подгруппа
-                    same = (s0.get("room") or "") == room and (
-                        s0.get("teacher") or ""
-                    ) in ("", teacher)
-                    if same:
-                        subgroups = []  # обычный предмет, не подгруппы
-                if subgroups:
-                    # подгруппы валидны, только если в них есть фамилии
-                    if not any((s.get("teacher") or "").strip() for s in subgroups):
-                        subgroups = []
-                if subgroups:
-                    # подгруппы найдены: основной кабинет/ФИО уходят в список,
-                    # чтобы не дублироваться
-                    groups.setdefault(name, []).append(
-                        Lesson(
-                            lesson_number=lesson_number,
-                            time="",
-                            subject=subject,
-                            room="",
-                            teacher="",
-                            subgroups=subgroups,
-                        )
-                    )
+                subgroups = _extract_subgroups(
+                    df, r, sc, block_end, lesson_col, cfg, stop_cols=stop_cols
+                )
+                # разбивка на подгруппы — только если пар две и больше
+                if len(subgroups) >= 2:
+                    # обратная совместимость: room/teacher — данные 1-й подгруппы
+                    room = subgroups[0].room or room
+                    teacher = subgroups[0].teacher or teacher
+                elif len(subgroups) == 1:
+                    # одна пара: обычный формат, поля берём из неё
+                    room = subgroups[0].room or room
+                    teacher = subgroups[0].teacher or teacher
+                    subgroups = []
                 else:
-                    groups.setdefault(name, []).append(
-                        Lesson(lesson_number=lesson_number, time="", subject=subject, room=room, teacher=teacher)
+                    subgroups = []
+                groups.setdefault(name, []).append(
+                    Lesson(
+                        lesson_number=lesson_number,
+                        time="",
+                        subject=subject,
+                        room=room,
+                        teacher=teacher,
+                        subgroups=subgroups,
                     )
+                )
     return groups
 
 
