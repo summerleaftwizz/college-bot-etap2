@@ -145,46 +145,57 @@ def _extract_subgroups(
     df, r: int, sc: int, rc: int, block_end: int, lesson_col: int, cfg: ParserConfig,
     max_col: int = 0,
 ) -> list[dict]:
-    """Ищет подгруппы в строке пары: соседние ячейки с кабинетами и ФИО.
+    """Ищет подгруппы, читая ВСЕ колонки справа от названия предмета.
 
-    Формат «английского языка»: после ячейки предмета в той же строке идут
-    кабинеты и фамилии преподавателей подгрупп (например ауд. 121 + ФИО1 +
-    ФИО2), плюс строка преподавателей под самой парой. Всё читаем из ячеек
-    динамически — ничего не хардкодим. Окно ограничено колонкой следующей
-    группы (max_col), чтобы не захватывать чужие данные.
+    Формат «иностранного языка»: в одной строке идут подряд
+    предмет | кабинет 1 | ФИО 1 | кабинет 2 | ФИО 2 | …
+    Кабинеты и фамилии берутся динамически из ячеек — ничего не хардкодим.
+    Дополнительно читается строка-ФИО под парой (другой частый формат).
+    Окно ограничено колонкой следующей группы (max_col), чтобы не захватить
+    чужие данные; для последней группы — небольшим запасом вправо.
     """
     ncols = df.shape[1]
-    if max_col:
-        ncols = min(ncols, max_col)
-    # окно ячеек правее предмета в строке пары (кабинеты подгрупп и ФИО)
-    cells: list[str] = []
-    for c in range(rc, min(rc + 4, ncols)):
-        v = _cell_to_str(df.iat[r, c])
-        if v and not _is_group_name(v, cfg):
-            cells.append(v)
-    # строка преподавателей под парой — ФИО подгрупп в тех же колонках
-    if r + 1 < block_end and _to_int(df.iat[r + 1, lesson_col]) is None:
-        for c in range(rc, min(rc + 4, ncols)):
-            v = _normalize_teacher(df.iat[r + 1, c])
-            if v and _is_fio(v):
-                cells.append(v)
+    limit = min(ncols, max_col) if max_col else min(ncols, sc + 8)
 
-    # раскладываем по подгруппам: кабинет открывает подгруппу, ФИО —
-    # преподаватель текущей (или новой, если кабинета нет)
+    teacher_row = -1
+    if r + 1 < block_end and _to_int(df.iat[r + 1, lesson_col]) is None:
+        teacher_row = r + 1
+
     subs: list[dict] = []
-    for v in cells:
-        if _is_fio(v):
-            if not subs or subs[-1].get("teacher"):
-                subs.append({"room": "", "teacher": v})
-            else:
-                subs[-1]["teacher"] = v
+
+    def add_room(value: str) -> None:
+        value = value.strip()
+        if not value:
+            return
+        if subs and not subs[-1].get("room"):
+            subs[-1]["room"] = value
         else:
-            if subs and not subs[-1].get("room"):
-                subs[-1]["room"] = v
-            elif subs and not subs[-1].get("teacher"):
-                subs[-1]["teacher"] = v
+            subs.append({"room": value, "teacher": ""})
+
+    def add_teacher(value: str) -> None:
+        value = value.strip()
+        if not value:
+            return
+        if subs and not subs[-1].get("teacher"):
+            subs[-1]["teacher"] = value
+        else:
+            subs.append({"room": "", "teacher": value})
+
+    # идём по колонкам слева направо: ячейка пары и (если есть) ФИО под ней
+    for c in range(sc + 1, limit):
+        v = _cell_to_str(df.iat[r, c])
+        if teacher_row != -1:
+            vt = _normalize_teacher(df.iat[teacher_row, c])
+        else:
+            vt = ""
+        if v and not _is_group_name(v, cfg):
+            if _is_fio(v):
+                add_teacher(v)
             else:
-                subs.append({"room": v, "teacher": ""})
+                add_room(v)
+        if vt and _is_fio(vt):
+            add_teacher(vt)
+
     return [s for s in subs if s["room"] or s["teacher"]]
 
 
@@ -224,24 +235,27 @@ def _parse_sheet(
                 subject = _cell_to_str(df.iat[r, sc])
                 room = _cell_to_str(df.iat[r, rc])
                 teacher = ""
-                subgroups: list[dict] = []
                 if r + 1 < block_end and _to_int(df.iat[r + 1, lesson_col]) is None:
                     # следующая строка — ФИО преподавателя (в колонке предмета)
                     teacher = _normalize_teacher(df.iat[r + 1, sc])
-                    # подгруппы: соседние ячейки с кабинетами/ФИО (английский и др.)
-                    next_sc = pairs[gi + 1][0] if gi + 1 < len(pairs) else 0
-                    subgroups = _extract_subgroups(
-                        df, r, sc, rc, block_end, lesson_col, cfg, max_col=next_sc
-                    )
-                    if len(subgroups) == 1:
-                        s0 = subgroups[0]
-                        # одиночный «кабинет = основной», без своего ФИО —
-                        # это обычная пара, а не подгруппа
-                        same = (s0.get("room") or "") == room and (
-                            s0.get("teacher") or ""
-                        ) in ("", teacher)
-                        if same:
-                            subgroups = []  # обычный предмет, не подгруппы
+                # подгруппы: ячейки справа от предмета (иностранный язык и др.)
+                next_sc = pairs[gi + 1][0] if gi + 1 < len(pairs) else 0
+                subgroups = _extract_subgroups(
+                    df, r, sc, rc, block_end, lesson_col, cfg, max_col=next_sc
+                )
+                if len(subgroups) == 1:
+                    s0 = subgroups[0]
+                    # одиночный «кабинет = основной», без своего ФИО —
+                    # это обычная пара, а не подгруппа
+                    same = (s0.get("room") or "") == room and (
+                        s0.get("teacher") or ""
+                    ) in ("", teacher)
+                    if same:
+                        subgroups = []  # обычный предмет, не подгруппы
+                if subgroups:
+                    # подгруппы валидны, только если в них есть фамилии
+                    if not any((s.get("teacher") or "").strip() for s in subgroups):
+                        subgroups = []
                 if subgroups:
                     # подгруппы найдены: основной кабинет/ФИО уходят в список,
                     # чтобы не дублироваться

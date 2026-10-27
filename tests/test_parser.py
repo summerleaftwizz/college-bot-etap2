@@ -87,20 +87,35 @@ def test_is_fio_patterns():
 
 
 def test_extract_subgroups_from_row():
-    """Строка английского: предмет + кабинеты + две фамилии → 2 подгруппы."""
+    """Реальная строка: предмет | ауд.1 | ФИО1 | ауд.2 | ФИО2 → 2 подгруппы."""
     import pandas as pd
     from services.parser import ParserConfig, _extract_subgroups
     df = pd.DataFrame(
         [
-            ["Иностранный язык", "Ино... 121", "Платицына Е. В.", "Байшева Я. В."],
+            ["Иностранный язык в профессиональной деятельности",
+             "Ино... 319", "Кобзова С. В.", "Ино... 202", "Ощепкова А. С."],
         ],
         dtype=object,
     )
     cfg = ParserConfig()
     subs = _extract_subgroups(df, 0, sc=0, rc=1, block_end=1, lesson_col=0, cfg=cfg)
-    assert len(subs) == 2
-    assert subs[0]["room"] == "Ино... 121" and subs[0]["teacher"] == "Платицына Е. В."
-    assert subs[1]["room"] == "" and subs[1]["teacher"] == "Байшева Я. В."
+    assert len(subs) == 2, subs
+    assert subs[0]["room"] == "Ино... 319" and subs[0]["teacher"] == "Кобзова С. В."
+    assert subs[1]["room"] == "Ино... 202" and subs[1]["teacher"] == "Ощепкова А. С."
+
+
+def test_extract_subgroups_single_column_empty():
+    """Вторая подгруппа пустая → одна подгруппа (кабинет + ФИО)."""
+    import pandas as pd
+    from services.parser import ParserConfig, _extract_subgroups
+    df = pd.DataFrame(
+        [["Иностранный язык", "Ино... 319", "Кобзова С. В.", None, None]],
+        dtype=object,
+    )
+    cfg = ParserConfig()
+    subs = _extract_subgroups(df, 0, sc=0, rc=1, block_end=1, lesson_col=0, cfg=cfg)
+    assert len(subs) == 1
+    assert subs[0]["room"] == "Ино... 319" and subs[0]["teacher"] == "Кобзова С. В."
 
 
 def test_extract_subgroups_not_bleed_into_next_group():
@@ -120,6 +135,32 @@ def test_extract_subgroups_not_bleed_into_next_group():
     assert len(subs) == 1
     assert subs[0]["room"] == "304"
     assert not subs[0]["teacher"]
+
+
+def test_parse_full_lesson_with_two_subgroups():
+    """Сквозной тест: пара с двумя подгруппами из xlsx-строки."""
+    import pandas as pd
+    from services.parser import parse_schedule
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df = pd.DataFrame(
+            [
+                ["Пара", "Дисциплина", None, None, None, None, "Ауд."],
+                ["№", "Преподаватель", None, None, None, None, None],
+                [None, "1ИСИП-25-9", None, None, None, None, None],
+                [3, "Иностранный язык в профессиональной деятельности",
+                 "Ино... 319", "Кобзова С. В.", "Ино... 202", "Ощепкова А. С.", None],
+            ]
+        )
+        df.to_excel(writer, sheet_name="Понедельник", index=False, header=False)
+    groups = parse_schedule(buf.getvalue(), settings.parser)
+    lessons = groups["1ИСИП-25-9"]
+    assert len(lessons) == 1
+    subs = lessons[0].subgroups
+    assert len(subs) == 2, subs
+    assert subs[0]["room"] == "Ино... 319" and subs[0]["teacher"] == "Кобзова С. В."
+    assert subs[1]["room"] == "Ино... 202" and subs[1]["teacher"] == "Ощепкова А. С."
+    assert lessons[0].room == "" and lessons[0].teacher == ""
 
 
 def test_parse_raises_on_unknown_format():

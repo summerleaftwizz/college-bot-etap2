@@ -241,8 +241,19 @@ def test_subgroups_rendered_as_separate_lines():
                    {"room": "202", "teacher": "Байшева Я. В."}]
     text = format_schedule("26.10", "1ИСИП-25-9", [e])
     assert "📚 Иностранный язык" in text
-    assert "1 п/г · каб. 121 · Платицына Е. В." in text
-    assert "2 п/г · каб. 202 · Байшева Я. В." in text
+    assert "1 п/г · ауд. 121 · Платицына Е. В." in text
+    assert "2 п/г · ауд. 202 · Байшева Я. В." in text
+
+
+def test_subgroups_dirty_room_cells():
+    """«Ино... 319» / «ауд. 202» приводятся к «ауд. 319» / «ауд. 202»."""
+    e = entry(3, subject="Иностранный язык в профессиональной деятельности")
+    e.subgroups = [{"room": "Ино... 319", "teacher": "Кобзова С. В."},
+                   {"room": "ауд. 202", "teacher": "Ощепкова А. С."}]
+    text = format_schedule("26.10", "1ИСИП-25-9", [e])
+    assert ("📚 Иностранный язык в профессиональной деятельности") in text
+    assert "1 п/г · ауд. 319 · Кобзова С. В." in text
+    assert "2 п/г · ауд. 202 · Ощепкова А. С." in text
 
 
 def test_subgroups_single_missing_second():
@@ -250,7 +261,7 @@ def test_subgroups_single_missing_second():
     e = entry(3, subject="Иностранный язык")
     e.subgroups = [{"room": "121", "teacher": "Платицына Е. В."}]
     text = format_schedule("26.10", "1ИСИП-25-9", [e])
-    assert "1 п/г · каб. 121 · Платицына Е. В. (<i>у 2 подгруппы пары нет</i>)" in text
+    assert "1 п/г · ауд. 121 · Платицына Е. В. (<i>у 2 подгруппы пары нет</i>)" in text
 
 
 def test_subgroups_missing_pair_line():
@@ -268,7 +279,7 @@ def test_subgroups_json_string_from_db():
     e.subgroups = json.dumps([{"room": "121", "teacher": "Ощепкова А. С."}],
                              ensure_ascii=False)
     text = format_schedule("26.10", "1ИСИП-25-9", [e])
-    assert "1 п/г · каб. 121 · Ощепкова А. С." in text
+    assert "1 п/г · ауд. 121 · Ощепкова А. С." in text
 
 
 def test_no_subgroups_field_is_ok():

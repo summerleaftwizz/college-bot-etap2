@@ -12,6 +12,7 @@
 """
 import html
 import json
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Optional
@@ -224,18 +225,35 @@ def _subgroups_of(entry) -> list[dict]:
     return list(raw)
 
 
+def _subgroup_room(room) -> str:
+    """Аудитория подгруппы: 'Ино... 319' -> 'ауд. 319', '319' -> 'ауд. 319'."""
+    r = (room or "").strip()
+    if not r:
+        return ""
+    if r.lower() == "max":
+        return "пара в максе"
+    # в ячейке бывает «Ино... 319» / «ауд. 319» / просто «319»: берём
+    # последний токен с цифрой, иначе оставляем текст как есть
+    tokens = r.split()
+    if len(tokens) > 1:
+        for tok in reversed(tokens):
+            if any(ch.isdigit() for ch in tok):
+                r = tok
+                break
+    r = re.sub(r"^(?:ауд\.?|каб\.?)\s*", "", r, flags=re.IGNORECASE)
+    return f"ауд. {esc(r)}"
+
+
 def _subgroup_line(idx: int, sub: dict, total: int) -> str:
     """'1 п/г · ауд. 121 · Платицына Е. В.'; пустая подгруппа — «пары нет»."""
     parts = []
-    room = _room_text(sub.get("room") or "")
+    room = _subgroup_room(sub.get("room") or "")
     if room:
         parts.append(room)
     teacher = (sub.get("teacher") or "").strip()
     if teacher:
         parts.append(esc(teacher))
     if not parts:
-        if idx < total:  # не последняя — значит, у следующих п/г пары нет
-            return f"{idx} п/г · <i>пары нет</i>"
         return f"{idx} п/г · <i>пары нет</i>"
     return f"{idx} п/г · " + " · ".join(parts)
 
