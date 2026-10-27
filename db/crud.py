@@ -1,5 +1,4 @@
 """Функции доступа к БД. Все операции асинхронные, принимают готовую сессию."""
-import json
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -197,7 +196,6 @@ async def replace_schedule(
         )
     )
     for l in lessons:
-        subs = l.get("subgroups") or []
         session.add(
             models.ScheduleEntry(
                 date=date,
@@ -207,7 +205,6 @@ async def replace_schedule(
                 subject=l.get("subject", ""),
                 room=l.get("room", ""),
                 teacher=l.get("teacher") or None,
-                subgroups=json.dumps(subs, ensure_ascii=False) if subs else None,
             )
         )
     await session.flush()

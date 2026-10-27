@@ -148,7 +148,6 @@ async def _process_file(
                     "subject": l.subject,
                     "room": l.room,
                     "teacher": l.teacher,
-                    "subgroups": list(l.subgroups or []),
                 }
                 for l in lessons
             ]

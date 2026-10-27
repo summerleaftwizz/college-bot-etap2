@@ -59,7 +59,6 @@ def _migrate_schema(sync_conn) -> None:
     """Применяет безопасные миграции схемы при старте (без потери данных)."""
     _fix_users_id_sqlite(sync_conn)
     _add_column_if_missing(sync_conn, "schedule_entries", "teacher", "VARCHAR(255)")
-    _add_column_if_missing(sync_conn, "schedule_entries", "subgroups", "VARCHAR(1024)")
     _add_column_if_missing(sync_conn, "users", "username", "VARCHAR(255)")
     _add_column_if_missing(sync_conn, "users", "auto_delete", "BOOLEAN")
     _add_column_if_missing(sync_conn, "users", "is_teacher", "BOOLEAN")
