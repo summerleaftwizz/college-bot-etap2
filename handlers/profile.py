@@ -12,7 +12,8 @@ from config import settings
 from db import SessionLocal
 from db import crud
 from handlers import menu_dispatch
-from keyboards.groups import build_groups_keyboard
+from keyboards.groups import build_specialties_keyboard
+from keyboards.menu import build_main_menu
 from keyboards.profile import (
     build_debts_keyboard,
     build_favorites_keyboard,
@@ -89,8 +90,22 @@ async def _profile_text(telegram_id: int, username: str | None) -> str:
         user = await crud.get_or_create_user(session, telegram_id, username=username)
         group = user.group
         subscribed = user.subscribed
+        is_teacher = user.is_teacher
+        teacher_name = user.teacher_name
         await session.commit()
-    return formatting.format_profile(username, group, subscribed)
+    return formatting.format_profile(
+        username,
+        group,
+        subscribed,
+        is_teacher=is_teacher,
+        teacher_name=teacher_name,
+    )
+
+
+async def _user_role(telegram_id: int) -> bool:
+    async with SessionLocal() as session:
+        user = await crud.get_user(session, telegram_id)
+    return bool(user and user.is_teacher)
 
 
 async def _favorites_text(telegram_id: int) -> str:
@@ -106,21 +121,34 @@ async def _answer_tracked(
     reply_markup=None,
     parse_mode: str = "HTML",
     telegram_id: int | None = None,
+    menu: bool = True,
 ) -> None:
     """Ответ с автоудалением предыдущих сообщений (если включено) и трекингом.
 
     telegram_id передаём явно: у callback.message.from_user — это сам бот.
+    При автоудалении обязательно заново прикрепляем Reply-меню, иначе
+    клавиатура пропадает на части клиентов.
     """
     uid = telegram_id if telegram_id is not None else message.from_user.id
     await chatlog.auto_clean(message.chat.id, uid, message.bot)
-    sent = await message.answer(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    sent = await message.answer(
+        text,
+        parse_mode=parse_mode,
+        reply_markup=reply_markup if reply_markup is not None else (
+            build_main_menu() if menu else None
+        ),
+    )
     await chatlog.track(message.chat.id, sent)
 
 
 async def _refresh_profile(message: Message, telegram_id: int, username: str | None) -> None:
     text = await _profile_text(telegram_id, username)
+    is_teacher = await _user_role(telegram_id)
     await _answer_tracked(
-        message, text, reply_markup=build_profile_keyboard(), telegram_id=telegram_id
+        message,
+        text,
+        reply_markup=build_profile_keyboard(is_teacher),
+        telegram_id=telegram_id,
     )
 
 
@@ -233,13 +261,24 @@ async def on_support_report(message: Message, state: FSMContext, bot) -> None:
 
 @router.callback_query(F.data == "prof:group")
 async def cb_profile_group(callback: CallbackQuery) -> None:
-    async with SessionLocal() as session:
-        groups = await crud.get_groups(session)
     await callback.answer()
-    if not groups:
-        await callback.message.answer("Расписание ещё не загружено, групп пока нет.")
-        return
-    await callback.message.answer("Выбери группу:", reply_markup=build_groups_keyboard(groups))
+    await callback.message.answer(
+        "Выбери специальность 👇", reply_markup=build_specialties_keyboard()
+    )
+
+
+@router.callback_query(F.data == "prof:student")
+async def cb_profile_student(callback: CallbackQuery) -> None:
+    """Возврат из режима преподавателя в режим студента."""
+    async with SessionLocal() as session:
+        await crud.unset_teacher(session, callback.from_user.id)
+        await session.commit()
+
+    await callback.answer("Режим студента включён")
+    await callback.message.answer(
+        "👨‍🎓 Снова режим студента. Выбери специальность и группу 👇",
+        reply_markup=build_specialties_keyboard(),
+    )
 
 
 @router.callback_query(F.data == "prof:back")
@@ -316,20 +355,6 @@ async def cb_set_autodel(callback: CallbackQuery) -> None:
         reply_markup=build_settings_keyboard(subscribed, auto_delete),
         telegram_id=callback.from_user.id,
     )
-
-
-@router.callback_query(F.data == "set:clearchat")
-async def cb_set_clearchat(callback: CallbackQuery) -> None:
-    ok, fail = await chatlog.clear_chat(callback.message.bot, callback.message.chat.id, 20)
-    await callback.answer()
-    if ok and not fail:
-        text = f"🗑 Очищено последних {ok} сообщений."
-    elif fail:
-        text = "Часть сообщений не удалось удалить (старше 48 часов). Удалите вручную свайпом."
-    else:
-        text = "Не нашёл своих сообщений для удаления."
-    sent = await callback.message.answer(text)
-    await chatlog.track(callback.message.chat.id, sent)
 
 
 @router.callback_query(F.data == "set:guide")

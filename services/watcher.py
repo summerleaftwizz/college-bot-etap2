@@ -68,11 +68,16 @@ async def _send(bot: Bot, telegram_id: int, text: str) -> bool:
 
 async def _broadcast(bot: Bot, date_label: str, groups: dict) -> int:
     async with SessionLocal() as session:
-        targets = [(u.telegram_id, u.group) for u in await crud.list_subscribed_users(session)]
+        users = await crud.list_subscribed_users(session)
+        targets = [
+            (u.telegram_id, u.group, False, "")
+            for u in users
+            if not u.is_teacher
+        ]
 
     delay = settings.BROADCAST_DELAY_MS / 1000
     sent = 0
-    for telegram_id, group in targets:
+    for telegram_id, group, is_teacher, teacher_name in targets:
         lessons = groups.get(group)
         if not lessons:
             continue
@@ -80,7 +85,33 @@ async def _broadcast(bot: Bot, date_label: str, groups: dict) -> int:
         if await _send(bot, telegram_id, text):
             sent += 1
         await asyncio.sleep(delay)
+    sent += await _broadcast_teachers(bot, date_label, groups)
     logger.info("рассылка по дате %s: отправлено %d", date_label, sent)
+    return sent
+
+
+async def _broadcast_teachers(bot: Bot, date_label: str, groups: dict) -> int:
+    """Уведомления преподавателям: пары преподавателя по всем группам."""
+    async with SessionLocal() as session:
+        teachers = [
+            (u.telegram_id, u.teacher_name or "")
+            for u in await crud.list_teachers(session)
+            if u.subscribed and not u.inactive
+        ]
+
+    delay = settings.BROADCAST_DELAY_MS / 1000
+    sent = 0
+    for telegram_id, teacher_name in teachers:
+        async with SessionLocal() as session:
+            entries = await crud.get_teacher_schedule(session, date_label, teacher_name)
+        if not entries:
+            continue
+        text = formatting.format_notification(
+            date_label, teacher_name, entries, teacher_mode=True
+        )
+        if await _send(bot, telegram_id, text):
+            sent += 1
+        await asyncio.sleep(delay)
     return sent
 
 

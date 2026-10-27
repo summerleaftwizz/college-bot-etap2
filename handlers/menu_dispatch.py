@@ -1,7 +1,7 @@
 """Диспетчер кнопок главного меню для отмены FSM-состояний.
 
 Когда пользователь в состоянии ожидания ввода (добавление долга/напоминания,
-жалоба, рассылка) нажимает кнопку Reply-клавиатуры, бот должен:
+жалоба, фамилия преподавателя, рассылка) нажимает кнопку Reply-клавиатуры, бот должен:
 1) очистить состояние (state.clear()),
 2) выполнить действие нажатой кнопки,
 3) написать «Действие отменено».
@@ -10,9 +10,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from keyboards.menu import (
+    BTN_BELLS,
     BTN_NOW,
     BTN_PROFILE,
-    BTN_SCHEDULE,
     BTN_SUPPORT,
     BTN_TODAY,
     BTN_TOMORROW,
@@ -23,11 +23,7 @@ from keyboards.menu import (
 async def dispatch_menu_button(message: Message) -> None:
     """Выполняет действие кнопки главного меню по её тексту."""
     text = message.text or ""
-    if text == BTN_SCHEDULE:
-        from handlers import schedule as schedule_handlers
-
-        await schedule_handlers.btn_schedule(message)
-    elif text == BTN_TODAY:
+    if text == BTN_TODAY:
         from handlers import schedule as schedule_handlers
 
         await schedule_handlers.btn_today(message, message.bot)
@@ -39,6 +35,10 @@ async def dispatch_menu_button(message: Message) -> None:
         from handlers import schedule as schedule_handlers
 
         await schedule_handlers.btn_now(message, message.bot)
+    elif text == BTN_BELLS:
+        from handlers import schedule as schedule_handlers
+
+        await schedule_handlers.btn_bells(message)
     elif text == BTN_PROFILE:
         from handlers import profile as profile_handlers
 

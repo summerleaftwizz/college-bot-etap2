@@ -16,6 +16,8 @@ class User(Base):
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True, nullable=False)
     group: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    is_teacher: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    teacher_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     subscribed: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
     auto_delete: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     inactive: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)

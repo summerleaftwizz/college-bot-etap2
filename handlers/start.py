@@ -1,21 +1,54 @@
+"""Старт бота, выбор группы в два шага и режим преподавателя."""
+import html
+
 from aiogram import F, Router
 from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
 from db import SessionLocal
 from db import crud
-from keyboards.groups import build_groups_keyboard
+from handlers import menu_dispatch
+from keyboards.groups import (
+    build_specialties_keyboard,
+    build_specialty_groups_keyboard,
+    specialty_of,
+)
 from keyboards.menu import build_main_menu
 
 router = Router()
 
 WELCOME_TEXT = (
-    "👋 Привет! Я бот для просмотра расписания.\n\n"
-    "📅 Здесь ты можешь узнать, какие пары сегодня и завтра.\n"
-    "👤 В профиле можно сменить группу, добавить долги и настроить уведомления.\n"
-    "💡 Если что-то не работает — пиши в поддержку!\n\n"
-    "Выбирай действие на клавиатуре ниже 👇"
+    "⭐ Расписание КГТТ\n\n"
+    "Слежу за расписанием техникума и присылаю его, как только выложат.\n\n"
+    "&gt; ⚡ пары на сегодня и завтра в один тап\n"
+    "&gt; ⚠️ новое расписание и замены сразу уведомлением\n\n"
+    "Выбери специальность или напиши цифру своей группы 👇"
 )
+
+TEACHER_MODE_TEXT = (
+    "Режим преподавателя. Покажу ваши пары по всем группам и буду присылать их, "
+    "как только выложат расписание."
+)
+
+
+class StartStates(StatesGroup):
+    teacher_name = State()
+
+
+def _esc(value) -> str:
+    return html.escape(str(value or ""), quote=False)
+
+
+async def _groups_for_specialty(spec: str) -> list[str]:
+    async with SessionLocal() as session:
+        groups = await crud.get_groups(session)
+    return [g for g in groups if specialty_of(g) == spec]
+
+
+def _specialties_text() -> str:
+    return WELCOME_TEXT
 
 
 @router.message(CommandStart())
@@ -25,9 +58,10 @@ async def cmd_start(message: Message) -> None:
             session, message.from_user.id, username=message.from_user.username
         )
         group = user.group
+        is_teacher = user.is_teacher
         await session.commit()
 
-    if group:
+    if group or is_teacher:
         await message.answer(WELCOME_TEXT, reply_markup=build_main_menu())
         return
 
@@ -36,11 +70,47 @@ async def cmd_start(message: Message) -> None:
 
     if not groups:
         await message.answer(
-            "Привет! Подожди, расписание ещё не загружено. "
-            "Как только появится первый файл — сможешь выбрать группу."
+            "Расписание ещё не загружено. Как только появится первый файл — "
+            "сможешь выбрать специальность и группу.",
+            reply_markup=build_specialties_keyboard(),
         )
-    else:
-        await message.answer("Привет! Выбери свою группу:", reply_markup=build_groups_keyboard(groups))
+        return
+
+    await message.answer(WELCOME_TEXT, reply_markup=build_specialties_keyboard())
+
+
+# --- шаг 1: специальность --------------------------------------------------
+
+
+@router.callback_query(F.data.startswith("spec:"))
+async def on_specialty(callback: CallbackQuery) -> None:
+    value = callback.data[len("spec:"):]
+
+    if value == "back":
+        await callback.answer()
+        if callback.message:
+            await callback.message.edit_text(
+                _specialties_text(), reply_markup=build_specialties_keyboard()
+            )
+        return
+
+    groups = await _groups_for_specialty(value)
+    await callback.answer()
+    if not callback.message:
+        return
+    if not groups:
+        await callback.message.edit_text(
+            f"По специальности <b>{_esc(value)}</b> пока нет групп.\n\nВыбери другую 👇",
+            reply_markup=build_specialties_keyboard(),
+        )
+        return
+    await callback.message.edit_text(
+        f"<b>{_esc(value)}</b> — выбери группу 👇",
+        reply_markup=build_specialty_groups_keyboard(value, groups),
+    )
+
+
+# --- шаг 2: группа ---------------------------------------------------------
 
 
 @router.callback_query(F.data.startswith("g:"))
@@ -49,18 +119,51 @@ async def on_group_selected(callback: CallbackQuery) -> None:
     async with SessionLocal() as session:
         await crud.set_group(session, callback.from_user.id, group)
         user = await crud.get_user(session, callback.from_user.id)
-        if user is not None and callback.from_user.username:
-            user.username = callback.from_user.username
+        if user is not None:
+            user.is_teacher = False
+            if callback.from_user.username:
+                user.username = callback.from_user.username
         await session.commit()
 
     await callback.answer("Группа сохранена")
     if callback.message:
         await callback.message.edit_text(
-            f"Группа: <b>{group}</b> ✅",
-            reply_markup=None,
+            f"Группа: <b>{_esc(group)}</b> ✅", reply_markup=None
         )
         await callback.message.answer(
-            WELCOME_TEXT,
-            parse_mode="HTML",
-            reply_markup=build_main_menu(),
+            WELCOME_TEXT, parse_mode="HTML", reply_markup=build_main_menu()
         )
+
+
+# --- режим преподавателя ---------------------------------------------------
+
+
+@router.callback_query(F.data == "teacher:start")
+async def on_teacher_start(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(StartStates.teacher_name)
+    await callback.answer()
+    if callback.message:
+        await callback.message.answer(
+            "Напиши свою фамилию (как в расписании), и я запомню её:"
+        )
+
+
+@router.message(StartStates.teacher_name)
+async def on_teacher_name(message: Message, state: FSMContext) -> None:
+    if await menu_dispatch.cancel_fsm_on_menu(message, state):
+        return
+
+    name = (message.text or "").strip()
+    if len(name) < 2:
+        await message.answer("Фамилия слишком короткая. Напиши ещё раз:")
+        return
+
+    await state.clear()
+    async with SessionLocal() as session:
+        await crud.set_teacher(session, message.from_user.id, name[:255])
+        user = await crud.get_user(session, message.from_user.id)
+        if user is not None and message.from_user.username:
+            user.username = message.from_user.username
+        await session.commit()
+
+    await message.answer(TEACHER_MODE_TEXT, reply_markup=build_main_menu())

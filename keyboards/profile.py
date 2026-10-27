@@ -4,10 +4,14 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from db.crud import FAVORITE_SLOTS
 
 
-def build_profile_keyboard() -> InlineKeyboardMarkup:
+def build_profile_keyboard(is_teacher: bool = False) -> InlineKeyboardMarkup:
+    if is_teacher:
+        role_row = [InlineKeyboardButton(text="👨‍🎓 Я студент", callback_data="prof:student")]
+    else:
+        role_row = [InlineKeyboardButton(text="👥 Сменить группу", callback_data="prof:group")]
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="👥 Сменить группу", callback_data="prof:group")],
+            role_row,
             [InlineKeyboardButton(text="⭐ Избранные", callback_data="fav:list")],
             [
                 InlineKeyboardButton(text="📝 Мои долги", callback_data="debt:list"),
@@ -73,7 +77,6 @@ def build_settings_keyboard(subscribed: bool, auto_delete: bool) -> InlineKeyboa
         inline_keyboard=[
             [InlineKeyboardButton(text=notify, callback_data="set:notify")],
             [InlineKeyboardButton(text=auto, callback_data="set:autodel")],
-            [InlineKeyboardButton(text="🗑 Очистить чат", callback_data="set:clearchat")],
             [InlineKeyboardButton(text="🤫 Секретный гайд", callback_data="set:guide")],
             [InlineKeyboardButton(text="⬅️ Назад в профиль", callback_data="prof:back")],
         ]

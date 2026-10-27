@@ -86,6 +86,48 @@ async def mark_inactive(session: AsyncSession, telegram_id: int) -> None:
         user.inactive = True
 
 
+# ------------------------------------------------------------ teacher ---
+
+async def set_teacher(session: AsyncSession, telegram_id: int, teacher_name: str) -> None:
+    """Переводит пользователя в режим преподавателя."""
+    user = await get_or_create_user(session, telegram_id)
+    user.is_teacher = True
+    user.teacher_name = teacher_name
+    user.group = None
+
+
+async def unset_teacher(session: AsyncSession, telegram_id: int) -> None:
+    """Возврат в режим студента (фамилия сохраняется на случай возврата)."""
+    user = await get_or_create_user(session, telegram_id)
+    user.is_teacher = False
+
+
+async def list_teachers(session: AsyncSession) -> list[models.User]:
+    res = await session.execute(
+        select(models.User).where(
+            models.User.is_teacher.is_(True),
+            models.User.teacher_name.isnot(None),
+        )
+    )
+    return list(res.scalars())
+
+
+async def get_teacher_schedule(
+    session: AsyncSession, date: str, teacher_name: str
+) -> list[models.ScheduleEntry]:
+    """Пары преподавателя по всем группам на дату (по подстроке фамилии)."""
+    res = await session.execute(
+        select(models.ScheduleEntry)
+        .where(models.ScheduleEntry.date == date)
+        .order_by(models.ScheduleEntry.lesson_number, models.ScheduleEntry.group)
+    )
+    needle = (teacher_name or "").strip().lower()
+    rows = list(res.scalars())
+    if not needle:
+        return rows
+    return [e for e in rows if needle in (e.teacher or "").lower()]
+
+
 async def list_subscribed_users(session: AsyncSession) -> list[models.User]:
     res = await session.execute(
         select(models.User).where(

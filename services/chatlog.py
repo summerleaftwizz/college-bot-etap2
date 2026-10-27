@@ -1,7 +1,9 @@
-"""Трекинг ID сообщений бота для «Очистить чат» и автоудаления.
+"""Трекинг ID сообщений бота для автоудаления.
 
 Бот не может запросить историю чата через Bot API, поэтому мы сами
-запоминаем ID своих сообщений (в памяти, по чатам) и удаляем их по запросу.
+запоминаем ID своих сообщений (в памяти, по чатам) и удаляем их перед
+новым ответом, если у пользователя включено автоудаление. После удаления
+клиентам заново прикрепляется Reply-меню (см. handlers._answer_tracked).
 """
 import asyncio
 from collections import defaultdict, deque
@@ -40,21 +42,6 @@ async def forget(chat_id: int, message_ids: list[int]) -> None:
         _sent[chat_id] = deque(
             (mid for mid in d if mid not in removed), maxlen=d.maxlen
         )
-
-
-async def clear_chat(bot, chat_id: int, limit: int = 20) -> tuple[int, int]:
-    """Удаляет последние `limit` сообщений бота. Возвращает (успешно, не удалось)."""
-    ids = await tracked(chat_id, limit)
-    ok, fail = 0, 0
-    for mid in ids:
-        try:
-            await bot.delete_message(chat_id, mid)
-            ok += 1
-        except Exception:
-            fail += 1
-    if ids:
-        await forget(chat_id, ids)
-    return ok, fail
 
 
 async def auto_clean(chat_id: int, telegram_id: int, bot) -> None:

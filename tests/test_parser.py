@@ -63,6 +63,16 @@ def test_normalize_teacher():
     assert _normalize_teacher("   ") == ""
 
 
+def test_group_pattern_accepts_english_subgroups():
+    """Подгруппы латиницей: 1ИСИП-25-9A и т.п."""
+    pat = settings.parser.GROUP_NAME_PATTERN
+    assert __import__("re").match(pat, "1ИСИП-25-9A")
+    assert __import__("re").match(pat, "1ИСИП-25-9B")
+    assert __import__("re").match(pat, "ОПИр-25-9C")
+    assert __import__("re").match(pat, "1ОГР-26-9")
+    assert not __import__("re").match(pat, "Иванов И.И.")
+
+
 def test_parse_raises_on_unknown_format():
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:

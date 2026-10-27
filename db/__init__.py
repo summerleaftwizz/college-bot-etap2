@@ -61,6 +61,8 @@ def _migrate_schema(sync_conn) -> None:
     _add_column_if_missing(sync_conn, "schedule_entries", "teacher", "VARCHAR(255)")
     _add_column_if_missing(sync_conn, "users", "username", "VARCHAR(255)")
     _add_column_if_missing(sync_conn, "users", "auto_delete", "BOOLEAN")
+    _add_column_if_missing(sync_conn, "users", "is_teacher", "BOOLEAN")
+    _add_column_if_missing(sync_conn, "users", "teacher_name", "VARCHAR(255)")
     for slot in (1, 2, 3):
         _add_column_if_missing(sync_conn, "users", f"favorite_{slot}", "VARCHAR(255)")
 

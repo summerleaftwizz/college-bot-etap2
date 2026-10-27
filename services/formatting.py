@@ -1,10 +1,21 @@
-"""Форматирование расписания в HTML-текст для Telegram."""
+"""Форматирование расписания в HTML-текст для Telegram.
+
+Пары оформляются через <blockquote>:
+  студент:
+    > 🕒 1 пара · 08:30 – 10:00
+    > 📚 Предмет
+    > 🚪 каб. 304 · Иванов И. И.
+  преподаватель:
+    > 🕒 1 пара · 08:30 – 10:00
+    > 📚 1ИСИП-25-9 — Предмет
+    > 🚪 каб. 304
+"""
 import html
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from config import bells_for_weekday, settings
+from config import BELLS_SATURDAY, BELLS_WEEKDAY, bells_for_weekday, settings
 from utils import WEEKDAY_NAMES, now as _now
 
 EMOJI_NUMS = {
@@ -34,6 +45,15 @@ def _emoji_num(n: int) -> str:
 def _to_min(t: str) -> int:
     h, m = t.split(":")
     return int(h) * 60 + int(m)
+
+
+def _short_time(t: str) -> str:
+    """'08:30' -> '8:30' (как в ТЗ для расписания звонков)."""
+    try:
+        h, m = t.split(":")
+        return f"{int(h)}:{m}"
+    except Exception:
+        return t
 
 
 def _weekday_of(date_label: str, ref: datetime) -> int:
@@ -188,7 +208,45 @@ def _room_text(room) -> str:
     return f"каб. {esc(r)}"
 
 
-def _render_lessons(entries, bells, empty_text: str) -> str:
+def _lesson_subject(entry, teacher_mode: bool) -> str:
+    subject = esc(getattr(entry, "subject", "") or "")
+    if teacher_mode:
+        group = esc(getattr(entry, "group", "") or "")
+        if group:
+            return f"{group} — {subject}"
+    return subject
+
+
+def _lesson_place(entry, teacher_mode: bool) -> str:
+    """Строка «кабинет · преподаватель» (у преподавателя — только кабинет)."""
+    room = _room_text(getattr(entry, "room", ""))
+    if teacher_mode:
+        return f"🚪 {room}" if room else ""
+    teacher = (getattr(entry, "teacher", "") or "").strip()
+    if room and teacher:
+        return f"🚪 {room} · {esc(teacher)}"
+    if room:
+        return f"🚪 {room}"
+    if teacher:
+        return f"👤 {esc(teacher)}"
+    return ""
+
+
+def _render_lesson_block(entry, n: int, bells, teacher_mode: bool) -> str:
+    b = bells.get(n)
+    lines: list[str] = []
+    if settings.SHOW_TIME and b:
+        lines.append(f"🕒 <b>{n} пара</b> · {esc(b[0])} – {esc(b[1])}")
+    else:
+        lines.append(f"🕒 <b>{n} пара</b>")
+    lines.append(f"📚 {_lesson_subject(entry, teacher_mode)}")
+    place = _lesson_place(entry, teacher_mode)
+    if place:
+        lines.append(place)
+    return "<blockquote>" + "\n".join(lines) + "</blockquote>"
+
+
+def _render_lessons(entries, bells, empty_text: str, *, teacher_mode: bool = False) -> str:
     by_num = {e.lesson_number: e for e in entries}
     nums = sorted(by_num)
     active_nums = [n for n in nums if (by_num[n].subject or "").strip()]
@@ -204,32 +262,17 @@ def _render_lessons(entries, bells, empty_text: str) -> str:
         if entry is None or not (entry.subject or "").strip():
             blocks.append(f"{_emoji_num(n)} <i>пара — окно</i>")
             continue
-        b = bells.get(n)
-        time_part = ""
-        if settings.SHOW_TIME and b:
-            time_part = f" <b>{esc(b[0])} – {esc(b[1])}</b>"
-        lines = [f"{_emoji_num(n)}{time_part}"]
-        lines.append(f"📚 {esc(entry.subject)}")
-        below: list[str] = []
-        room_text = _room_text(entry.room)
-        if room_text:
-            below.append(f"🚪 {room_text}")
-        teacher = getattr(entry, "teacher", None)
-        if teacher:
-            below.append(f"👤 {esc(teacher)}")
-        if below:
-            lines.append("—————")
-            lines.extend(below)
-        blocks.append("\n".join(lines))
+        blocks.append(_render_lesson_block(entry, n, bells, teacher_mode))
 
     return "\n\n".join(blocks)
 
 
-def _header(date_label: str, group: str, ref: datetime) -> list[str]:
+def _header(date_label: str, group: str, ref: datetime, teacher_mode: bool = False) -> list[str]:
     weekday = _weekday_of(date_label, ref)
+    who = f"👤 <b>{esc(group)}</b>" if teacher_mode else f"👥 <b>{esc(group)}</b>"
     return [
         f"📅 <b>Расписание на {esc(date_label)} ({esc(WEEKDAY_NAMES[weekday].lower())})</b>",
-        f"👥 <b>{esc(group)}</b>",
+        who,
     ]
 
 
@@ -241,12 +284,13 @@ def format_schedule(
     now: Optional[datetime] = None,
     with_state: bool = False,
     empty_text: str = "Пар нет 🎉",
+    teacher_mode: bool = False,
 ) -> str:
     ref = now or _now()
     weekday = _weekday_of(date_label, ref)
     bells = bells_for_weekday(weekday)
 
-    lines = _header(date_label, group, ref)
+    lines = _header(date_label, group, ref, teacher_mode)
     if with_state and entries:
         state = get_current_state(entries, ref)
         state_lines = _state_block(state, bells)
@@ -256,12 +300,17 @@ def format_schedule(
     lines.append("")
     lines.append(SEPARATOR)
     lines.append("")
-    lines.append(_render_lessons(entries, bells, empty_text))
+    lines.append(_render_lessons(entries, bells, empty_text, teacher_mode=teacher_mode))
     return "\n".join(lines)
 
 
 def format_notification(
-    date_label: str, group: str, entries, *, now: Optional[datetime] = None
+    date_label: str,
+    group: str,
+    entries,
+    *,
+    now: Optional[datetime] = None,
+    teacher_mode: bool = False,
 ) -> str:
     """Уведомление о новом расписании: без шапки «сейчас», вместо неё —
     «Начало занятий в HH:MM, всего N пар»."""
@@ -274,7 +323,7 @@ def format_notification(
     )
 
     lines = [f"🔔 <b>Появилось новое расписание на {esc(date_label)}!</b>", ""]
-    lines.extend(_header(date_label, group, ref))
+    lines.extend(_header(date_label, group, ref, teacher_mode))
     if active:
         b = bells.get(active[0].lesson_number)
         start = b[0] if b else "—"
@@ -283,21 +332,31 @@ def format_notification(
     lines.append("")
     lines.append(SEPARATOR)
     lines.append("")
-    lines.append(_render_lessons(entries, bells, "Пар нет 🎉"))
+    lines.append(_render_lessons(entries, bells, "Пар нет 🎉", teacher_mode=teacher_mode))
     return "\n".join(lines)
 
 
 def format_what_now(
-    date_label: str, group: str, entries, *, now: Optional[datetime] = None
+    date_label: str,
+    group: str,
+    entries,
+    *,
+    now: Optional[datetime] = None,
+    teacher_mode: bool = False,
 ) -> str:
-    """Короткий ответ на «Что сейчас»: состояние дня в 1–2 строки.
-
-    minutes_left считаем только когда известны минуты (state.until = HH:MM).
-    """
+    """Короткий ответ на «Что сейчас»: состояние дня в 1–2 строки."""
     ref = now or _now()
     weekday = _weekday_of(date_label, ref)
     bells = bells_for_weekday(weekday)
     state = get_current_state(entries, ref)
+
+    def _subject(lesson) -> str:
+        text = esc(lesson.subject)
+        if teacher_mode:
+            grp = esc(getattr(lesson, "group", "") or "")
+            if grp:
+                return f"{grp} — {text}"
+        return text
 
     def _room(lesson) -> str:
         t = _room_text(getattr(lesson, "room", ""))
@@ -309,7 +368,7 @@ def format_what_now(
     if state.kind == "ongoing":
         c = state.current
         return (
-            f"⏱️ <b>Сейчас:</b> {c.lesson_number} пара — {esc(c.subject)}{_room(c)}\n"
+            f"⏱️ <b>Сейчас:</b> {c.lesson_number} пара — {_subject(c)}{_room(c)}\n"
             f"⏳ До конца {state.minutes_left} мин (до {esc(state.until)})"
         )
 
@@ -318,31 +377,43 @@ def format_what_now(
         word = "Перемена" if state.kind == "break" else "Окно"
         return (
             f"☕ <b>{word}</b> — ещё {state.minutes_left} мин (до {esc(state.until)})\n"
-            f"➡️ Дальше: {nxt.lesson_number} пара — {esc(nxt.subject)}{_room(nxt)}"
+            f"➡️ Дальше: {nxt.lesson_number} пара — {_subject(nxt)}{_room(nxt)}"
         )
 
     if state.kind == "before":
         nxt = state.next_lesson
-        start = bells.get(nxt.lesson_number, ("—", ""))[0]
         return (
             f"🌅 Занятия начнутся в {esc(state.until)} (через {state.minutes_left} мин)\n"
-            f"➡️ Первая: {nxt.lesson_number} пара — {esc(nxt.subject)}{_room(nxt)}"
+            f"➡️ Первая: {nxt.lesson_number} пара — {_subject(nxt)}{_room(nxt)}"
         )
 
     # after
     c = state.current
-    return f"✅ Пары на сегодня закончились (последняя — {c.lesson_number}, {esc(c.subject)})"
+    return f"✅ Пары на сегодня закончились (последняя — {c.lesson_number}, {_subject(c)})"
 
 
-def format_profile(username: Optional[str], group: Optional[str], subscribed: bool) -> str:
+def format_profile(
+    username: Optional[str],
+    group: Optional[str],
+    subscribed: bool,
+    *,
+    is_teacher: bool = False,
+    teacher_name: Optional[str] = None,
+) -> str:
     """Карточка профиля пользователя."""
     uname = f"@{esc(username)}" if username else "—"
     status = "включены 🔔" if subscribed else "выключены 🔕"
+    if is_teacher:
+        role = "Преподаватель"
+        who = f"👤 Преподаватель: <b>{esc(teacher_name) if teacher_name else '—'}</b>"
+    else:
+        role = "Студент"
+        who = f"👥 Уч. группа: <b>{esc(group) if group else '—'}</b>"
     return (
         "👤 <b>Профиль</b>\n\n"
         f"🆔 {uname}\n"
-        "🎓 Роль: Студент\n"
-        f"👥 Уч. группа: <b>{esc(group) if group else '—'}</b>\n"
+        f"🎓 Роль: {role}\n"
+        f"{who}\n"
         f"🔔 Уведомления: {status}"
     )
 
@@ -353,6 +424,24 @@ def format_favorites(favorites: dict) -> str:
     for slot in (1, 2, 3):
         group = favorites.get(slot)
         lines.append(f"{slot}. {esc(group) if group else 'отсутствует'}")
+    return "\n".join(lines)
+
+
+def format_bells() -> str:
+    """Расписание звонков: «1 пара: 8:30–10:00, ...» из config.py."""
+    def _grid(title: str, grid: dict) -> list[str]:
+        if not grid:
+            return []
+        items = [
+            f"{n} пара: {_short_time(start)}–{_short_time(end)}"
+            for n, (start, end) in sorted(grid.items())
+        ]
+        return [f"<b>{title}</b>", "\n".join(items), ""]
+
+    lines = ["📞 <b>Расписание звонков</b>", ""]
+    lines.extend(_grid("🕒 Пн–Пт", BELLS_WEEKDAY))
+    lines.extend(_grid("🕒 Суббота", BELLS_SATURDAY))
+    lines.append("<i>Воскресенье — занятий нет.</i>")
     return "\n".join(lines)
 
 

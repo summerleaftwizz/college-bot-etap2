@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 from config import BELLS_SATURDAY, BELLS_WEEKDAY, bells_for_weekday
 from services.formatting import (
+    format_bells,
+    format_profile,
     get_current_state,
     format_notification,
     format_schedule,
@@ -12,9 +14,9 @@ from services.formatting import (
 )
 
 
-def entry(num, subject="Предмет", room="", teacher="", date="26.10"):
+def entry(num, subject="Предмет", room="", teacher="", date="26.10", group=""):
     return SimpleNamespace(
-        lesson_number=num, subject=subject, room=room, teacher=teacher, date=date
+        lesson_number=num, subject=subject, room=room, teacher=teacher, date=date, group=group
     )
 
 
@@ -95,6 +97,37 @@ def test_format_html_escaping():
     assert "<em>" not in text
 
 
+def test_format_blockquote_layout():
+    """Студент: blockquote с 🕒/📚/🚪·👤."""
+    text = format_schedule(
+        "26.10", "ГР-1", [entry(1, room="304", teacher="Иванов И. И.")],
+        now=datetime(2026, 10, 26, 12, 0),
+    )
+    assert "<blockquote>" in text and "</blockquote>" in text
+    assert "🕒 <b>1 пара</b> · 08:30 – 10:00" in text
+    assert "📚 Предмет" in text
+    assert "🚪 каб. 304 · Иванов И. И." in text
+    # без кабинета — 👤; без ФИО — 👤 нет
+    text = format_schedule("26.10", "ГР-1", [entry(2, room="", teacher="Петров П. П.")],
+                           now=datetime(2026, 10, 26, 12, 0))
+    assert "👤 Петров П. П." in text
+    text = format_schedule("26.10", "ГР-1", [entry(3, room="9", teacher="")],
+                           now=datetime(2026, 10, 26, 12, 0))
+    assert "🚪 каб. 9" in text and "👤" not in text
+
+
+def test_format_teacher_mode():
+    """Преподаватель: группа в строке предмета, ФИО не дублируется."""
+    text = format_schedule(
+        "26.10", "Иванов И. И.", [entry(1, room="304", teacher="Иванов И. И.", group="1ИСИП-25-9")],
+        now=datetime(2026, 10, 26, 12, 0), teacher_mode=True,
+    )
+    assert "📚 1ИСИП-25-9 — Предмет" in text
+    assert "🚪 каб. 304" in text
+    assert "Иванов И. И. ·" not in text  # ФИО не в месте проведения
+    assert "👤 Иванов И. И." not in text
+
+
 def test_format_no_teacher_line_when_empty():
     text = format_schedule("26.10", "ГР-1", [entry(1, teacher="")],
                            now=datetime(2026, 10, 26, 12, 0))
@@ -122,7 +155,7 @@ def test_format_empty_pairs_shown_with_emoji():
     )
     assert "1️⃣ <i>пара — окно</i>" in text
     assert "2️⃣ <i>пара — окно</i>" in text
-    assert "3️⃣" in text
+    assert "🕒 <b>3 пара</b>" in text
     assert "— нет" not in text
     assert "⏳" not in text
 
@@ -134,17 +167,25 @@ def test_format_max_room():
     assert "каб. max" not in text
 
 
-def test_format_dash_separator():
-    text = format_schedule("26.10", "ГР-1", [entry(1, room="304", teacher="Иванов И. И.")],
-                           now=datetime(2026, 10, 26, 12, 0))
-    assert "📚 Предмет\n—————\n🚪 каб. 304\n👤 Иванов И. И." in text
-    # без кабинета и ФИО тире не рисуем
-    text = format_schedule("26.10", "ГР-1", [entry(2, room="", teacher="")],
-                           now=datetime(2026, 10, 26, 12, 0))
-    assert "—————" not in text
+def test_format_bells():
+    text = format_bells()
+    assert "Расписание звонков" in text
+    assert "1 пара: 8:30–10:00" in text       # ведущий ноль срезан
+    assert "2 пара: 10:20–11:50" in text
+    assert "Суббота" in text and "2 пара: 10:10–11:40" in text
+    assert "Воскресенье" in text
 
 
-def test_notification_has_start_line_not_state():
+def test_format_profile_teacher_mode():
+    text = format_profile("user1", None, True, is_teacher=True, teacher_name="Иванова А. А.")
+    assert "Преподаватель" in text and "Иванова А. А." in text
+    assert "Уч. группа" not in text
+    text = format_profile("user1", "1ИСИП-25-9", False)
+    assert "Студент" in text and "1ИСИП-25-9" in text
+    assert "выключены" in text
+
+
+def test_split_message_long():
     entries = [entry(1), entry(2)]
     text = format_notification("26.10", "ГР-1", entries, now=datetime(2026, 10, 26, 9, 0))
     assert "Начало занятий в 08:30, всего 2 пар" in text
