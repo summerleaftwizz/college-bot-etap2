@@ -50,6 +50,25 @@ class KnownSchedule(Base):
     notified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ScheduleSnapshot(Base):
+    """Предыдущее состояние расписания группы — для уведомлений об изменениях.
+
+    fingerprint — sha256 от нормализованного содержимого пар (номер, время,
+    предмет, кабинет, преподаватель, подгруппы). Если новый файл даёт другой
+    отпечаток — значит в расписании что-то поменялось (перенос, отмена, замена).
+    """
+
+    __tablename__ = "schedule_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    date: Mapped[str] = mapped_column(String(10), index=True, nullable=False)   # 'DD.MM'
+    group: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class Debt(Base):
     """Долги пользователя (строго индивидуальны, привязка по telegram_id)."""
 

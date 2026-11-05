@@ -73,6 +73,10 @@ class Settings:
     REQUEST_TIMEOUT: float = field(default_factory=lambda: float(_get("REQUEST_TIMEOUT", "15")))
     REQUEST_RETRIES: int = field(default_factory=lambda: _get_int("REQUEST_RETRIES", 3))
     BROADCAST_DELAY_MS: int = field(default_factory=lambda: _get_int("BROADCAST_DELAY_MS", 50))
+    # Интервал проверки изменений расписания (замены/отмены/переносы), минут.
+    CHANGE_CHECK_INTERVAL_MINUTES: int = field(
+        default_factory=lambda: _get_int("CHANGE_CHECK_INTERVAL_MINUTES", 60)
+    )
     SHOW_TIME: bool = field(default_factory=lambda: _get_bool("SHOW_TIME", True))
     parser: ParserConfig = field(default_factory=ParserConfig)
 

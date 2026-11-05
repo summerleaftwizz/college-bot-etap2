@@ -1,10 +1,10 @@
-"""Кнопка «👨‍🏫 Преподаватели»: поиск расписания преподавателя по фамилии.
+"""Кнопка «👨‍🏫 Преподаватели»: расписание преподавателя на СЕГОДНЯ.
 
-Пользователь вводит фамилию, бот ищет все пары преподавателя на текущую
-неделю (Пн–Сб) в БД schedule_entries и выводит списком:
-день, время, группа, аудитория. Основная группа пользователя не меняется.
+Пользователь вводит фамилию, бот ищет все пары преподавателя на текущий
+день и выводит в том же красивом формате, что и расписание группы
+(🕓 время, 📚 предмет, 🚪 кабинет, группы), через formatting.format_schedule
+с teacher_mode=True. Основная группа пользователя не меняется.
 """
-import html
 import logging
 
 from aiogram import F, Router
@@ -16,9 +16,8 @@ from db import SessionLocal
 from db import crud
 from handlers import menu_dispatch
 from keyboards.menu import BTN_TEACHERS, build_main_menu
-from services import watcher
-from services.formatting import split_message
-from utils import WEEKDAY_NAMES, week_days
+from services import formatting, watcher
+from utils import now, today_ddmm
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -28,6 +27,31 @@ SEARCH_PROMPT = "Введите фамилию преподавателя для
 
 class TeacherSearchStates(StatesGroup):
     waiting_name = State()
+
+
+async def _teacher_day_text(name: str, bot) -> str:
+    """Красивое расписание преподавателя на сегодня (как расписание группы)."""
+    label = today_ddmm()
+    async with SessionLocal() as session:
+        entries = await crud.get_teacher_schedule(session, label, name)
+    if not entries:
+        # Возможно, расписание ещё не скачано — пробуем принудительно.
+        try:
+            await watcher.run_check(bot)
+        except Exception:
+            logger.exception("ошибка принудительной загрузки расписания")
+        async with SessionLocal() as session:
+            entries = await crud.get_teacher_schedule(session, label, name)
+
+    return formatting.format_schedule(
+        label,
+        name,
+        entries,
+        now=now(),
+        with_state=True,
+        empty_text="Сегодня пар нет 🎉",
+        teacher_mode=True,
+    )
 
 
 @router.message(F.text == BTN_TEACHERS)
@@ -40,7 +64,7 @@ async def btn_teachers(message: Message, state: FSMContext) -> None:
 
 
 @router.message(TeacherSearchStates.waiting_name)
-async def on_teacher_name(message: Message, state: FSMContext) -> None:
+async def on_teacher_name(message: Message, state: FSMContext, bot) -> None:
     if await menu_dispatch.cancel_fsm_on_menu(message, state):
         return
 
@@ -54,48 +78,8 @@ async def on_teacher_name(message: Message, state: FSMContext) -> None:
 
     await state.clear()
 
-    # Собираем пары преподавателя за Пн–Сб текущей недели.
-    found: list[tuple[str, str, list]] = []
-    for day_name, label in week_days():
-        async with SessionLocal() as session:
-            entries = await crud.get_teacher_schedule(session, label, name)
-        if entries:
-            found.append((day_name, label, entries))
-
-    if not found:
-        # Возможно, расписание ещё не скачано — пробуем принудительно.
-        try:
-            await watcher.run_check(message.bot)
-        except Exception:
-            logger.exception("ошибка принудительной загрузки расписания")
-        for day_name, label in week_days():
-            async with SessionLocal() as session:
-                entries = await crud.get_teacher_schedule(session, label, name)
-            if entries:
-                found.append((day_name, label, entries))
-
-    esc = html.escape(name, quote=False)
-    if not found:
-        await message.answer(
-            f"❌ Преподаватель <b>{esc}</b> не найден в расписании на текущую неделю.\n\n"
-            "Попробуйте ещё раз — /teachers",
-            reply_markup=build_main_menu(),
-        )
-        return
-
-    lines = [f"👨‍🏫 <b>{esc}</b> — расписание на неделю:\n"]
-    for day_name, label, entries in found:
-        lines.append(f"<b>{day_name} ({label})</b>")
-        for e in sorted(entries, key=lambda x: (x.lesson_number, x.group)):
-            time = (e.time or "").strip()
-            if not time:
-                time = f"{e.lesson_number} пара"
-            subject = html.escape(e.subject or "", quote=False)
-            room = html.escape(e.room or "—", quote=False)
-            group = html.escape(e.group or "", quote=False)
-            lines.append(f"  • {time} — {group} — {subject} (каб. {room})")
-        lines.append("")
-    text = "\n".join(lines).rstrip()
+    text = await _teacher_day_text(name, bot)
+    from services.formatting import split_message
 
     for chunk in split_message(text):
         await message.answer(chunk, reply_markup=build_main_menu())

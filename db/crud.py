@@ -218,6 +218,40 @@ async def get_schedule(session: AsyncSession, date: str, group: str) -> list[mod
     return list(res.scalars())
 
 
+# ------------------------------------------------------------- snapshots ---
+# Снапшоты для детектора изменений расписания (services/changes.py)
+
+
+async def get_snapshot(session: AsyncSession, date: str, group: str) -> Optional[models.ScheduleSnapshot]:
+    res = await session.execute(
+        select(models.ScheduleSnapshot).where(
+            models.ScheduleSnapshot.date == date,
+            models.ScheduleSnapshot.group == group,
+        )
+    )
+    return res.scalar_one_or_none()
+
+
+async def upsert_snapshot(
+    session: AsyncSession, date: str, group: str, fingerprint: str
+) -> None:
+    """Создаёт или обновляет отпечаток расписания группы на дату."""
+    snap = await get_snapshot(session, date, group)
+    if snap is None:
+        session.add(models.ScheduleSnapshot(date=date, group=group, fingerprint=fingerprint))
+    else:
+        snap.fingerprint = fingerprint
+    await session.flush()
+
+
+async def list_snapshot_groups(session: AsyncSession) -> list[tuple[str, str]]:
+    """Все пары (date, group), для которых есть снапшоты."""
+    res = await session.execute(
+        select(models.ScheduleSnapshot.date, models.ScheduleSnapshot.group)
+    )
+    return list(res.all())
+
+
 async def replace_schedule(
     session: AsyncSession, date: str, group: str, lessons: list[dict]
 ) -> None:

@@ -3,7 +3,7 @@
 Раскладка:
   [📅 Сегодня] [📅 Завтра] [🗓 На неделю]
   [🔔 Что сейчас] [🔎 Другая группа] [👨‍🏫 Преподаватели]
-  [👤 Профиль] [📞 Расписание звонков] [🛠 Поддержка]
+  [👤 Профиль] [📞 Звонки] [🛠 Поддержка]
 
 Кнопки реагируют на ТЕКСТ сообщения, обработчики вешаются на F.text == BTN_*.
 """
@@ -16,7 +16,7 @@ BTN_NOW = "🔔 Что сейчас"
 BTN_OTHER_GROUP = "🔎 Другая группа"
 BTN_TEACHERS = "👨‍🏫 Преподаватели"
 BTN_PROFILE = "👤 Профиль"
-BTN_BELLS = "📞 Расписание звонков"
+BTN_BELLS = "📞 Звонки"
 BTN_SUPPORT = "🛠 Поддержка"
 
 MENU_BUTTONS = (
@@ -48,8 +48,7 @@ def build_main_menu() -> ReplyKeyboardMarkup:
             [
                 KeyboardButton(text=BTN_PROFILE),
                 KeyboardButton(text=BTN_BELLS),
-                KeyboardButton(text=BTN_SUPPORT),
-            ],
+                KeyboardButton(text=BTN_SUPPORT),            ],
         ],
         resize_keyboard=True,
         is_persistent=True,

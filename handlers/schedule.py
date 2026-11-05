@@ -7,6 +7,7 @@ from aiogram.types import Message
 
 from db import SessionLocal
 from db import crud
+from aiogram.types import CallbackQuery
 from keyboards.groups import build_specialties_keyboard
 from keyboards.menu import (
     BTN_BELLS,
@@ -16,6 +17,7 @@ from keyboards.menu import (
     BTN_WEEK,
     build_main_menu,
 )
+from keyboards.week import WEEK_LENGTH, build_week_nav_keyboard
 from services import formatting, watcher
 from utils import now, today_ddmm, tomorrow_ddmm, week_days
 
@@ -142,12 +144,51 @@ async def cmd_tomorrow(message: Message, bot: Bot) -> None:
     await _answer_day(message, bot, tomorrow_ddmm(), "Завтра пар нет 🎉", with_state=False)
 
 
-async def send_week(message: Message) -> None:
-    """Расписание Пн–Сб текущей недели, включая уже прошедшие дни.
+async def _week_day_text(user, label: str, bot: Bot, known: set[str]) -> str:
+    """Красивый текст одного дня недели (как у кнопки «Сегодня»).
 
-    Данные за прошедшие дни берутся из БД (архив спарсенных файлов):
-    replace_schedule заменяет только текущую дату, поэтому понедельник
-    остаётся в базе даже в четверг. Дни без данных помечаем отдельно.
+    Пустой день, у которого есть файл в known_schedules, — «Пар нет 🎉».
+    Если данных вообще нет — сообщение о том, что день не загружен.
+    """
+    if user.is_teacher:
+        title = user.teacher_name or ""
+        entries = await _load_teacher(label, title)
+    else:
+        title = user.group or ""
+        entries = await _load(label, title)
+
+    if not entries:
+        # Возможно, расписание ещё не скачано — пробуем принудительно (раз).
+        try:
+            await watcher.run_check(bot)
+        except Exception:
+            logger.exception("ошибка принудительной загрузки расписания")
+        if user.is_teacher:
+            entries = await _load_teacher(label, title)
+        else:
+            entries = await _load(label, title)
+
+    if entries:
+        return formatting.format_schedule(
+            label,
+            title,
+            entries,
+            now=now(),
+            with_state=False,
+            empty_text="Пар нет 🎉",
+            teacher_mode=bool(user.is_teacher),
+        )
+    if label in known:
+        return f"📅 <b>{title} — {label}</b>\n\nПар нет 🎉"
+    return f"📅 <b>{title} — {label}</b>\n\nРасписание на этот день не загружено."
+
+
+async def send_week(message: Message, bot: Bot) -> None:
+    """Кнопка «🗓 На неделю»: расписание на ТЕКУЩИЙ день + листалка Пн–Сб.
+
+    Под сообщением — инлайн-кнопки «◀️ Назад» / «Вперед ▶️» (листание
+    в пределах Пн..Сб текущей недели, на границах кнопка исчезает)
+    и «🏠 В меню» для выхода.
     """
     async with SessionLocal() as session:
         user = await crud.get_user(session, message.from_user.id)
@@ -157,65 +198,69 @@ async def send_week(message: Message) -> None:
         )
         return
 
-    known = await _known_dates()
     days = week_days()
-    loaded: list[tuple[str, str, list]] = []
-    for _day_name, label in days:
-        if user.is_teacher:
-            entries = await _load_teacher(label, user.teacher_name or "")
-            title = user.teacher_name or ""
-        else:
-            entries = await _load(label, user.group)
-            title = user.group
-        loaded.append((label, title, entries))
+    known = await _known_dates()
+    # Стартуем с текущего дня (если сегодня воскресенье — с понедельника).
+    index = next((i for i, (_n, lbl) in enumerate(days) if lbl == today_ddmm()), 0)
+    text = await _week_day_text(user, days[index][1], bot, known)
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=build_week_nav_keyboard(index),
+    )
 
-    # Если за всю неделю нет ни одной записи — пробуем принудительно скачать.
-    if not any(entries for _, _, entries in loaded):
+
+async def _edit_week_day(callback: CallbackQuery, index: int) -> None:
+    """Редактирует сообщение листалки на день index (с проверкой границ)."""
+    index = max(0, min(WEEK_LENGTH - 1, index))
+    async with SessionLocal() as session:
+        user = await crud.get_user(session, callback.from_user.id)
+    if user is None or (not user.group and not user.is_teacher):
+        await callback.answer("Сначала выбери группу: /start", show_alert=True)
+        return
+
+    days = week_days()
+    known = await _known_dates()
+    text = await _week_day_text(user, days[index][1], callback.bot, known)
+    await callback.answer()
+    if callback.message:
         try:
-            await watcher.run_check(message.bot)
+            await callback.message.edit_text(
+                text, parse_mode="HTML", reply_markup=build_week_nav_keyboard(index)
+            )
         except Exception:
-            logger.exception("ошибка принудительной загрузки расписания")
-        known = await _known_dates()
-        loaded = []
-        for _day_name, label in days:
-            if user.is_teacher:
-                entries = await _load_teacher(label, user.teacher_name or "")
-                title = user.teacher_name or ""
-            else:
-                entries = await _load(label, user.group)
-                title = user.group
-            loaded.append((label, title, entries))
+            # Текст не изменился (одинаковый день) — просто игнорируем.
+            pass
 
-    sent = 0
-    for label, title, entries in loaded:
-        if entries:
-            text = formatting.format_schedule(
-                label,
-                title,
-                entries,
-                now=now(),
-                with_state=False,
-                empty_text="Пар нет 🎉",
-                teacher_mode=bool(user.is_teacher),
-            )
-        elif label in known:
-            text = f"📅 <b>{title} — {label}</b>\n\nПар нет 🎉"
-        else:
-            text = (
-                f"📅 <b>{title} — {label}</b>\n\n"
-                "Расписание на этот день не загружено."
-            )
-        await _send(message, text)
-        sent += 1
-    if sent == 0:
-        await message.answer(
-            "Расписание на неделю пока не загружено.", reply_markup=build_main_menu()
+
+@router.callback_query(F.data.startswith("wk:nav:"))
+async def cb_week_nav(callback: CallbackQuery) -> None:
+    """Листание: предыдущий/следующий день недели."""
+    try:
+        index = int(callback.data.rsplit(":", 1)[1])
+    except ValueError:
+        await callback.answer()
+        return
+    await _edit_week_day(callback, index)
+
+
+@router.callback_query(F.data == "wk:home")
+async def cb_week_home(callback: CallbackQuery) -> None:
+    """«🏠 В меню»: убираем листалку и показываем обычное Reply-меню."""
+    await callback.answer()
+    if callback.message:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.answer(
+            "Главное меню 👇", reply_markup=build_main_menu()
         )
 
 
 @router.message(Command("week"))
-async def cmd_week(message: Message) -> None:
-    await send_week(message)
+async def cmd_week(message: Message, bot: Bot) -> None:
+    await send_week(message, bot)
 
 
 # --- кнопки главного меню (реагируют на ТЕКСТ кнопки) -----------------------
@@ -232,8 +277,8 @@ async def btn_tomorrow(message: Message, bot: Bot) -> None:
 
 
 @router.message(F.text == BTN_WEEK)
-async def btn_week(message: Message) -> None:
-    await send_week(message)
+async def btn_week(message: Message, bot: Bot) -> None:
+    await send_week(message, bot)
 
 
 @router.message(F.text == BTN_NOW)

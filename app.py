@@ -12,6 +12,16 @@ from db import dispose_db, init_db
 from handlers import admin, other, profile, schedule, start, teachers
 from services import reminders, watcher
 
+# APScheduler — периодическая проверка изменений расписания (замены/отмены).
+try:
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.triggers.interval import IntervalTrigger
+
+    from services import changes
+    _HAS_APSCHEDULER = True
+except ImportError:  # APScheduler не установлен — используем fallback-цикл
+    _HAS_APSCHEDULER = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -45,6 +55,33 @@ async def main() -> None:
     watcher_task = asyncio.create_task(watcher.watcher_loop(bot))
     reminders_task = asyncio.create_task(reminders.reminders_loop(bot))
 
+    # --- APScheduler: периодическая проверка изменений расписания -----------
+    scheduler = None
+    changes_task = None
+    if _HAS_APSCHEDULER:
+        scheduler = AsyncIOScheduler(timezone=settings.TZ_NAME)
+        scheduler.add_job(
+            changes.check_for_changes,
+            trigger=IntervalTrigger(minutes=settings.CHANGE_CHECK_INTERVAL_MINUTES),
+            args=[bot],
+            id="changes_check",
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.start()
+        logger.info(
+            "APScheduler запущен: проверка изменений каждые %d мин",
+            settings.CHANGE_CHECK_INTERVAL_MINUTES,
+        )
+    else:
+        # Fallback без APScheduler — простой asyncio-цикл с тем же интервалом.
+        changes_task = asyncio.create_task(changes.changes_loop(bot))
+        logger.warning("APScheduler не установлен — используется fallback-цикл изменений")
+
+    background_tasks = [watcher_task, reminders_task]
+    if changes_task is not None:
+        background_tasks.append(changes_task)
+
     loop = asyncio.get_running_loop()
     stop = asyncio.Event()
 
@@ -71,9 +108,11 @@ async def main() -> None:
                     logger.error("polling завершился с ошибкой: %s", exc)
     finally:
         logger.info("Останавливаю бота…")
-        for task in (polling_task, watcher_task, reminders_task, stop_task):
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
+        for task in (polling_task, stop_task, *background_tasks):
             task.cancel()
-        for task in (polling_task, watcher_task, reminders_task, stop_task):
+        for task in (polling_task, stop_task, *background_tasks):
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         await bot.session.close()

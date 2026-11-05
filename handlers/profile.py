@@ -108,24 +108,6 @@ async def _user_role(telegram_id: int) -> bool:
     return bool(user and user.is_teacher)
 
 
-async def _teachers_text(telegram_id: int) -> str:
-    """Преподаватели из спарсенного расписания группы пользователя.
-
-    Берём пары текущей группы (данные приходят из Excel с Яндекс.Диска),
-    собираем уникальных преподавателей с их предметами и кабинетами.
-    """
-    async with SessionLocal() as session:
-        user = await crud.get_user(session, telegram_id)
-        group = user.group if user else None
-        if not group:
-            return (
-                "👨‍🏫 <b>Преподаватели</b>\n\n"
-                "Сначала выбери группу: /start → специальность → группа."
-            )
-        catalog = await crud.list_teacher_catalog(session, group=group)
-    return formatting.format_teachers(catalog)
-
-
 async def _answer_tracked(
     message: Message,
     text: str,
@@ -355,17 +337,6 @@ async def cb_set_notify(callback: CallbackQuery) -> None:
 async def cb_set_guide(callback: CallbackQuery) -> None:
     await callback.answer()
     await _answer_tracked(callback.message, GUIDE_TEXT)
-
-
-# --- преподаватели ----------------------------------------------------------
-
-
-@router.callback_query(F.data == "teachers:list")
-async def cb_teachers(callback: CallbackQuery) -> None:
-    text = await _teachers_text(callback.from_user.id)
-    await callback.answer()
-    # Reply-меню обязательно: чтобы меню внизу не пропадало
-    await callback.message.answer(text, reply_markup=build_main_menu())
 
 
 # --- долги ------------------------------------------------------------------

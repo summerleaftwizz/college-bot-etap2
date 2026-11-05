@@ -36,7 +36,7 @@ async def btn_other_group(message: Message, state: FSMContext) -> None:
         "🔎 Выбери специальность и группу, расписание которой хочешь посмотреть.\n"
         "<i>Твоя основная группа не изменится. Чтобы вернуться, нажми любую кнопку меню.</i>",
         parse_mode="HTML",
-        reply_markup=build_specialties_keyboard(),
+        reply_markup=build_specialties_keyboard(with_teacher=False),
     )
 
 
@@ -51,7 +51,7 @@ async def cb_other_spec(callback: CallbackQuery, state: FSMContext) -> None:
         if callback.message:
             await callback.message.edit_text(
                 "🔎 Выбери специальность 👇",
-                reply_markup=build_specialties_keyboard(),
+                reply_markup=build_specialties_keyboard(with_teacher=False),
             )
         return
 
@@ -65,7 +65,7 @@ async def cb_other_spec(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.message.edit_text(
             f"По специальности <b>{html.escape(value, quote=False)}</b> пока нет групп.\n\n"
             "Выбери другую 👇",
-            reply_markup=build_specialties_keyboard(),
+            reply_markup=build_specialties_keyboard(with_teacher=False),
         )
         return
     await callback.message.edit_text(
@@ -109,9 +109,11 @@ async def cb_other_group(callback: CallbackQuery, state: FSMContext, bot) -> Non
             await callback.message.edit_text(text, reply_markup=None)
         except Exception:
             await callback.message.answer(text, reply_markup=None)
+        # После просмотра выходим из режима и возвращаем главное меню.
+        await state.clear()
         await callback.message.answer(
-            "🔎 Посмотреть другую группу?",
-            reply_markup=build_specialties_keyboard(),
+            "👆 Просмотр закончен. Твоя группа осталась прежней.",
+            reply_markup=build_main_menu(),
         )
 
 

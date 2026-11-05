@@ -515,21 +515,27 @@ def format_profile(
 
 
 def format_bells() -> str:
-    """Расписание звонков: «1 пара: 8:30–10:00, ...» из config.py."""
+    """Расписание звонков в стиле карточки расписания: эмодзи, ровные строки."""
     def _grid(title: str, grid: dict) -> list[str]:
         if not grid:
             return []
         items = [
-            f"{n} пара: {_short_time(start)}–{_short_time(end)}"
+            f"{_pair_icon(n)} <b>{n} пара</b>\n"
+            f"    ⏰ {_short_time(start)} — {_short_time(end)}"
             for n, (start, end) in sorted(grid.items())
         ]
-        return [f"<b>{title}</b>", "\n".join(items), ""]
+        return [f"{title}\n", "\n".join(items), ""]
 
     lines = ["📞 <b>Расписание звонков</b>", ""]
-    lines.extend(_grid("🕒 Пн–Пт", BELLS_WEEKDAY))
-    lines.extend(_grid("🕒 Суббота", BELLS_SATURDAY))
-    lines.append("<i>Воскресенье — занятий нет.</i>")
+    lines.extend(_grid("📅 Пн–Пт", BELLS_WEEKDAY))
+    lines.extend(_grid("📅 Суббота", BELLS_SATURDAY))
+    lines.append("😴 <i>Воскресенье — выходной, звонков нет.</i>")
     return "\n".join(lines)
+
+
+def _pair_icon(n: int) -> str:
+    """Иконка по номеру пары (для визуального разделения)."""
+    return {1: "1️⃣", 2: "2️⃣", 3: "3️⃣", 4: "4️⃣", 5: "5️⃣", 6: "6️⃣", 7: "7️⃣"}.get(n, "🔹")
 
 
 def split_message(text: str, limit: int = 4096) -> list[str]:

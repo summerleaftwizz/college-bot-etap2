@@ -10,7 +10,6 @@ def build_profile_keyboard(is_teacher: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             role_row,
-            [InlineKeyboardButton(text="👨‍🏫 Преподаватели", callback_data="teachers:list")],
             [
                 InlineKeyboardButton(text="📝 Мои долги", callback_data="debt:list"),
                 InlineKeyboardButton(text="⏰ Напоминания", callback_data="dl:list"),
