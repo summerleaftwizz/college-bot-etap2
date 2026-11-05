@@ -1,7 +1,7 @@
-"""Старт бота, подписка на канал, выбор группы в два шага и режим преподавателя."""
+"""Старт бота, выбор группы в два шага и режим преподавателя."""
 import html
 
-from aiogram import Bot, F, Router
+from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -16,15 +16,8 @@ from keyboards.groups import (
     specialty_of,
 )
 from keyboards.menu import build_main_menu
-from keyboards.subscribe import build_subscribe_keyboard
-from services import subscription
 
 router = Router()
-
-SUBSCRIBE_TEXT = (
-    "👋 Привет, я бот для расписания КГТТ!\n\n"
-    "🚀 Пожалуйста, подпишитесь для доступа к возможностям бота."
-)
 
 WELCOME_TEXT = (
     "⭐ Расписание КГТТ\n\n"
@@ -92,15 +85,7 @@ async def _show_welcome(message: Message, telegram_id: int | None = None) -> Non
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, bot: Bot) -> None:
-    if not await subscription.is_subscribed(bot, message.from_user.id):
-        await message.answer(
-            SUBSCRIBE_TEXT,
-            parse_mode="HTML",
-            reply_markup=build_subscribe_keyboard(),
-        )
-        return
-
+async def cmd_start(message: Message) -> None:
     async with SessionLocal() as session:
         await crud.get_or_create_user(
             session, message.from_user.id, username=message.from_user.username
@@ -108,32 +93,6 @@ async def cmd_start(message: Message, bot: Bot) -> None:
         await session.commit()
 
     await _show_welcome(message)
-
-
-# --- проверка подписки -----------------------------------------------------
-
-
-@router.callback_query(F.data == "sub:check")
-async def cb_check_subscription(callback: CallbackQuery, bot: Bot) -> None:
-    if not await subscription.is_subscribed(bot, callback.from_user.id):
-        await callback.answer("Вы еще не подписались", show_alert=True)
-        return
-
-    await callback.answer("Подписка подтверждена ✅")
-    try:
-        if callback.message:
-            await callback.message.delete()
-    except Exception:
-        pass
-
-    async with SessionLocal() as session:
-        await crud.get_or_create_user(
-            session, callback.from_user.id, username=callback.from_user.username
-        )
-        await session.commit()
-
-    if callback.message:
-        await _show_welcome(callback.message, callback.from_user.id)
 
 
 # --- шаг 1: специальность --------------------------------------------------
