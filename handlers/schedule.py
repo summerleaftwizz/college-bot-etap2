@@ -8,7 +8,14 @@ from aiogram.types import Message
 from db import SessionLocal
 from db import crud
 from keyboards.groups import build_specialties_keyboard
-from keyboards.menu import BTN_BELLS, BTN_NOW, BTN_TODAY, BTN_TOMORROW, build_main_menu
+from keyboards.menu import (
+    BTN_BELLS,
+    BTN_NOW,
+    BTN_TODAY,
+    BTN_TOMORROW,
+    BTN_WEEK,
+    build_main_menu,
+)
 from services import formatting, watcher
 from utils import now, today_ddmm, tomorrow_ddmm, week_days
 
@@ -135,8 +142,13 @@ async def cmd_tomorrow(message: Message, bot: Bot) -> None:
     await _answer_day(message, bot, tomorrow_ddmm(), "Завтра пар нет 🎉", with_state=False)
 
 
-@router.message(Command("week"))
-async def cmd_week(message: Message) -> None:
+async def send_week(message: Message) -> None:
+    """Расписание Пн–Сб текущей недели, включая уже прошедшие дни.
+
+    Данные за прошедшие дни берутся из БД (архив спарсенных файлов):
+    replace_schedule заменяет только текущую дату, поэтому понедельник
+    остаётся в базе даже в четверг. Дни без данных помечаем отдельно.
+    """
     async with SessionLocal() as session:
         user = await crud.get_user(session, message.from_user.id)
     if user is None or (not user.group and not user.is_teacher):
@@ -145,31 +157,65 @@ async def cmd_week(message: Message) -> None:
         )
         return
 
-    sent = 0
-    for _day_name, label in week_days():
+    known = await _known_dates()
+    days = week_days()
+    loaded: list[tuple[str, str, list]] = []
+    for _day_name, label in days:
         if user.is_teacher:
             entries = await _load_teacher(label, user.teacher_name or "")
             title = user.teacher_name or ""
         else:
             entries = await _load(label, user.group)
             title = user.group
-        if not entries:
-            continue
-        text = formatting.format_schedule(
-            label,
-            title,
-            entries,
-            now=now(),
-            with_state=False,
-            empty_text="Пар нет 🎉",
-            teacher_mode=bool(user.is_teacher),
-        )
+        loaded.append((label, title, entries))
+
+    # Если за всю неделю нет ни одной записи — пробуем принудительно скачать.
+    if not any(entries for _, _, entries in loaded):
+        try:
+            await watcher.run_check(message.bot)
+        except Exception:
+            logger.exception("ошибка принудительной загрузки расписания")
+        known = await _known_dates()
+        loaded = []
+        for _day_name, label in days:
+            if user.is_teacher:
+                entries = await _load_teacher(label, user.teacher_name or "")
+                title = user.teacher_name or ""
+            else:
+                entries = await _load(label, user.group)
+                title = user.group
+            loaded.append((label, title, entries))
+
+    sent = 0
+    for label, title, entries in loaded:
+        if entries:
+            text = formatting.format_schedule(
+                label,
+                title,
+                entries,
+                now=now(),
+                with_state=False,
+                empty_text="Пар нет 🎉",
+                teacher_mode=bool(user.is_teacher),
+            )
+        elif label in known:
+            text = f"📅 <b>{title} — {label}</b>\n\nПар нет 🎉"
+        else:
+            text = (
+                f"📅 <b>{title} — {label}</b>\n\n"
+                "Расписание на этот день не загружено."
+            )
         await _send(message, text)
         sent += 1
     if sent == 0:
         await message.answer(
             "Расписание на неделю пока не загружено.", reply_markup=build_main_menu()
         )
+
+
+@router.message(Command("week"))
+async def cmd_week(message: Message) -> None:
+    await send_week(message)
 
 
 # --- кнопки главного меню (реагируют на ТЕКСТ кнопки) -----------------------
@@ -183,6 +229,11 @@ async def btn_today(message: Message, bot: Bot) -> None:
 @router.message(F.text == BTN_TOMORROW)
 async def btn_tomorrow(message: Message, bot: Bot) -> None:
     await _answer_day(message, bot, tomorrow_ddmm(), "Завтра пар нет 🎉", with_state=False)
+
+
+@router.message(F.text == BTN_WEEK)
+async def btn_week(message: Message) -> None:
+    await send_week(message)
 
 
 @router.message(F.text == BTN_NOW)

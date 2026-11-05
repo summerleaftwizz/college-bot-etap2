@@ -9,7 +9,7 @@ from aiogram.client.default import DefaultBotProperties
 
 from config import settings
 from db import dispose_db, init_db
-from handlers import admin, profile, schedule, start
+from handlers import admin, other, profile, schedule, start, teachers
 from services import reminders, watcher
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,14 @@ async def main() -> None:
     )
     
     dp = Dispatcher()
-    dp.include_routers(start.router, profile.router, schedule.router, admin.router)
+    dp.include_routers(
+        other.router,        # до start: перехватывает g:/spec: в режиме «Другая группа»
+        teachers.router,     # FSM поиска преподавателя
+        start.router,
+        profile.router,
+        schedule.router,
+        admin.router,
+    )
 
     watcher_task = asyncio.create_task(watcher.watcher_loop(bot))
     reminders_task = asyncio.create_task(reminders.reminders_loop(bot))
