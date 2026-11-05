@@ -221,6 +221,25 @@ def _extract_subgroups(
         r + 1 < block_end and _to_int(df.iat[r + 1, lesson_col]) is None
     )
 
+    # --- Явный признак деления на подгруппы ---------------------------------
+    # Подгруппы «придумывать» нельзя: если в строке нет ВТОРОЙ ячейки с тем же
+    # предметом (формат «предмет|ауд|предмет|ауд») и нет второго ФИО в самой
+    # строке (инлайн-формат) — это обычная пара, возвращаем пустой список.
+    # Преподаватель под предметом — это обычный учитель пары, а не «1 п/г».
+    evidence = False
+    for c in range(sc + 1, ncols):
+        cell_probe = _cell_to_str(df.iat[r, c])
+        if not cell_probe:
+            continue
+        if _is_subject_like(cell_probe) and _same_subject(cell_probe, main_subject):
+            evidence = True
+            break
+        if _is_fio(cell_probe):
+            evidence = True
+            break
+    if not evidence:
+        return []
+
     def teacher_under(col: int) -> str:
         if not has_teacher_row:
             return ""

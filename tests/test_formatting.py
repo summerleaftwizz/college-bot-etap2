@@ -171,10 +171,9 @@ def test_format_max_room():
 def test_format_bells():
     text = format_bells()
     assert "Расписание звонков" in text
-    assert "1️⃣ <b>1 пара</b>" in text
-    assert "⏰ 8:30 — 10:00" in text           # ведущий ноль срезан
-    assert "⏰ 10:20 — 11:50" in text
-    assert "Суббота" in text and "⏰ 10:10 — 11:40" in text
+    assert "1 пара: 8:30–10:00" in text       # ведущий ноль срезан
+    assert "2 пара: 10:20–11:50" in text
+    assert "Суббота" in text and "2 пара: 10:10–11:40" in text
     assert "Воскресенье" in text
 
 

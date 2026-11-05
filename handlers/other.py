@@ -109,12 +109,8 @@ async def cb_other_group(callback: CallbackQuery, state: FSMContext, bot) -> Non
             await callback.message.edit_text(text, reply_markup=None)
         except Exception:
             await callback.message.answer(text, reply_markup=None)
-        # После просмотра выходим из режима и возвращаем главное меню.
+        # Тихо выходим из режима: расписание показано, ничего лишнего не шлём.
         await state.clear()
-        await callback.message.answer(
-            "👆 Просмотр закончен. Твоя группа осталась прежней.",
-            reply_markup=build_main_menu(),
-        )
 
 
 @router.message(OtherStates.choosing)
