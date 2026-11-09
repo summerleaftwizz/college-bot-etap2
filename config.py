@@ -77,10 +77,6 @@ class Settings:
     CHANGE_CHECK_INTERVAL_MINUTES: int = field(
         default_factory=lambda: _get_int("CHANGE_CHECK_INTERVAL_MINUTES", 60)
     )
-    # URL Telegram Mini App (внешний HTTPS-хостинг) и порт локального API.
-    WEBAPP_URL: str = field(default_factory=lambda: _get("WEBAPP_URL", ""))
-    WEBAPP_PORT: int = field(default_factory=lambda: _get_int("WEBAPP_PORT", 8443))
-    WEBAPP_HOST: str = field(default_factory=lambda: _get("WEBAPP_HOST", "0.0.0.0"))
     SHOW_TIME: bool = field(default_factory=lambda: _get_bool("SHOW_TIME", True))
     parser: ParserConfig = field(default_factory=ParserConfig)
 

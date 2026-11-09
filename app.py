@@ -9,8 +9,7 @@ from aiogram.client.default import DefaultBotProperties
 
 from config import settings
 from db import dispose_db, init_db
-from handlers import admin, miniapp, other, profile, schedule, start, teachers
-from services import miniapp as miniapp_service
+from handlers import admin, other, profile, schedule, start, teachers
 from services import reminders, watcher
 
 # APScheduler — периодическая проверка изменений расписания (замены/отмены).
@@ -47,19 +46,11 @@ async def main() -> None:
     dp.include_routers(
         other.router,        # до start: перехватывает g:/spec: в режиме «Другая группа»
         teachers.router,     # FSM поиска преподавателя
-        miniapp.router,      # кнопка «📱 Приложение» -> inline web_app
         start.router,
         profile.router,
         schedule.router,
         admin.router,
     )
-
-    # --- Mini App: aiohttp-сервер с API и статикой -------------------------
-    webapp_runner = None
-    try:
-        webapp_runner = await miniapp_service.start_webapp_server()
-    except Exception:
-        logger.exception("не удалось запустить Mini App сервер")
 
     watcher_task = asyncio.create_task(watcher.watcher_loop(bot))
     reminders_task = asyncio.create_task(reminders.reminders_loop(bot))
@@ -119,9 +110,6 @@ async def main() -> None:
         logger.info("Останавливаю бота…")
         if scheduler is not None:
             scheduler.shutdown(wait=False)
-        if webapp_runner is not None:
-            with contextlib.suppress(Exception):
-                await webapp_runner.cleanup()
         for task in (polling_task, stop_task, *background_tasks):
             task.cancel()
         for task in (polling_task, stop_task, *background_tasks):
@@ -135,5 +123,3 @@ async def main() -> None:
 if __name__ == "__main__":
     with contextlib.suppress(KeyboardInterrupt, SystemExit):
         asyncio.run(main())
-        # update
-# force rebuild 123
