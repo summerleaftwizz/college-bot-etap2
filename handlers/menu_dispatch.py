@@ -11,6 +11,7 @@ from aiogram.types import Message
 
 from keyboards.menu import (
     BTN_BELLS,
+    BTN_MINIAPP,
     BTN_NOW,
     BTN_OTHER_GROUP,
     BTN_PROFILE,
@@ -63,6 +64,10 @@ async def dispatch_menu_button(message: Message, state: FSMContext | None = None
         from handlers import profile as profile_handlers
 
         await profile_handlers.btn_support(message)
+    elif text == BTN_MINIAPP:
+        from handlers import miniapp as miniapp_handlers
+
+        await miniapp_handlers.btn_miniapp(message)
 
 
 async def cancel_fsm_on_menu(message: Message, state: FSMContext) -> bool:

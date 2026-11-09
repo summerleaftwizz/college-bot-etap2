@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Расписание КГТТ</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="header">
+        <div class="header-top">
+            <div>
+                <h1 class="title">Расписание</h1>
+                <p class="subtitle" id="groupLabel">загрузка…</p>
+            </div>
+            <button class="refresh-btn" id="refreshBtn" title="Обновить">🔄</button>
+        </div>
+
+        <nav class="tabs" id="tabs">
+            <button class="tab" data-day="today">Сегодня</button>
+            <button class="tab" data-day="tomorrow">Завтра</button>
+            <button class="tab active" data-day="week">Неделя</button>
+        </nav>
+
+        <div class="week-nav hidden" id="weekNav">
+            <button class="nav-arrow" id="prevDay">◀️</button>
+            <div class="week-day-label" id="weekDayLabel">—</div>
+            <button class="nav-arrow" id="nextDay">▶️</button>
+        </div>
+    </header>
+
+    <main class="content" id="content">
+        <div class="loader" id="loader">
+            <div class="spinner"></div>
+            <p>Загружаю расписание…</p>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <button class="footer-btn" id="shareBtn">📤 Поделиться</button>
+        <button class="footer-btn" id="notifyBtn">🔔 Уведомления</button>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>

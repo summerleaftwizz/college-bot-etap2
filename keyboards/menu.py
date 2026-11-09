@@ -18,6 +18,7 @@ BTN_TEACHERS = "👨‍🏫 Преподаватели"
 BTN_PROFILE = "👤 Профиль"
 BTN_BELLS = "📞 Звонки"
 BTN_SUPPORT = "🛠 Поддержка"
+BTN_MINIAPP = "📱 Приложение"
 
 MENU_BUTTONS = (
     BTN_TODAY,
@@ -29,6 +30,7 @@ MENU_BUTTONS = (
     BTN_PROFILE,
     BTN_BELLS,
     BTN_SUPPORT,
+    BTN_MINIAPP,
 )
 
 
@@ -48,7 +50,9 @@ def build_main_menu() -> ReplyKeyboardMarkup:
             [
                 KeyboardButton(text=BTN_PROFILE),
                 KeyboardButton(text=BTN_BELLS),
-                KeyboardButton(text=BTN_SUPPORT),            ],
+                KeyboardButton(text=BTN_SUPPORT),
+            ],
+            [KeyboardButton(text=BTN_MINIAPP)],
         ],
         resize_keyboard=True,
         is_persistent=True,
