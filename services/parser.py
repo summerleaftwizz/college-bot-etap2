@@ -174,6 +174,142 @@ def _find_group_cells(df: pd.DataFrame, cfg: ParserConfig) -> list[tuple[int, in
     return cells
 
 
+# --------------------------------------------- чтение сетки с merge-ячейками ---
+
+
+def _read_sheet_grid(content: bytes, sheet_name: str) -> pd.DataFrame:
+    """Читает лист как «сырую» сетку с РАЗВЁРНУТЫМИ объединёнными ячейками.
+
+    openpyxl хранит значение только в левой-верхней ячейке merged-области,
+    остальные возвращает как None. Здесь мы протягиваем значение каждой
+    объединённой области на все её ячейки — чтобы предмет/преподаватель,
+    занимающие несколько строк, читались на каждой строке пары.
+    """
+    import openpyxl
+
+    wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+    ws = wb[sheet_name]
+
+    grid: list[list] = [[cell.value for cell in row] for row in ws.iter_rows()]
+
+    # Разворачиваем каждую объединённую область вниз и вправо.
+    for merged in ws.merged_cells.ranges:
+        value = ws.cell(row=merged.min_row, column=merged.min_col).value
+        if value is None:
+            continue
+        for ri in range(merged.min_row - 1, min(merged.max_row, len(grid))):
+            for ci in range(merged.min_col - 1, min(merged.max_col, len(grid[ri]))):
+                grid[ri][ci] = value
+
+    return pd.DataFrame(grid, dtype=object)
+
+
+def _parse_sheet_by_groups(
+    df: pd.DataFrame, cfg: ParserConfig, content: bytes, sheet_name: str
+) -> dict[str, list[Lesson]]:
+    """Якорный парсинг: у каждой группы свой блок столбцов справа.
+
+    Схема файла (подтверждена на реальных данных):
+      строка N:  1ИСИП-25-9 (J) | 1ОГР-25-9 (N) | 1ЭП-26-9 (S)
+      строка N+1: данные пар — по 3 столбца на группу:
+                  [предмет] [преподаватель] [кабинет]
+
+    Блок группы = от её столбца до столбца следующей группы (или конца листа).
+    Данные читаются ТОЛЬКО из этого блока — в столбцы соседей не залезаем.
+    """
+    group_cells = _find_group_cells(df, cfg)
+    if not group_cells:
+        raise ParseError(
+            "не найдены названия групп на листе %s (маска: %s)"
+            % (sheet_name, cfg.GROUP_NAME_PATTERN)
+        )
+
+    # Строка с названиями групп: та, где их больше всего.
+    by_row: dict[int, list[tuple[int, str]]] = {}
+    for r, c, name in group_cells:
+        by_row.setdefault(r, []).append((c, name))
+    header_row = max(by_row, key=lambda k: len(by_row[k]))
+    cells = sorted(by_row[header_row], key=lambda x: x[0])
+
+    ncols = df.shape[1]
+    groups: dict[str, list[Lesson]] = {}
+
+    for i, (sc, name) in enumerate(cells):
+        # Границы блока группы: до столбца следующей группы.
+        block_end = cells[i + 1][0] if i + 1 < len(cells) else ncols
+        block_cols = list(range(sc, block_end))
+
+        lessons: list[Lesson] = []
+        last_subject = ""
+        last_teacher = ""
+        last_room = ""
+        seen_numbers: set[int] = set()
+
+        for r in range(header_row + 1, len(df)):
+            # Номер пары — только в первом столбце блока группы.
+            lesson_number = _to_int(df.iat[r, sc])
+            if lesson_number is None or lesson_number in seen_numbers:
+                continue
+            seen_numbers.add(lesson_number)
+
+            # Читаем ровно три столбца блока: предмет, преподаватель, кабинет.
+            subject = _cell_to_str(df.iat[r, block_cols[0]]) if block_cols else ""
+            teacher = (
+                _normalize_teacher(_cell_to_str(df.iat[r, block_cols[1]]))
+                if len(block_cols) > 1 else ""
+            )
+            room = (
+                _clean_room(_cell_to_str(df.iat[r, block_cols[2]]))
+                if len(block_cols) > 2 else ""
+            )
+
+            # Если ячейка пустая (не было merge) — берём предыдущее значение:
+            # так «размазанные» пары читаются один раз.
+            if not subject:
+                subject = last_subject
+            else:
+                last_subject = subject
+            if not teacher:
+                teacher = last_teacher
+            else:
+                last_teacher = teacher
+            if not room:
+                room = last_room
+            else:
+                last_room = room
+
+            lessons.append(
+                Lesson(
+                    lesson_number=lesson_number,
+                    time="",
+                    subject=subject,
+                    room=room,
+                    teacher=teacher,
+                    subgroups=[],
+                )
+            )
+
+        groups.setdefault(name, []).extend(lessons)
+
+    # Строгая проверка: если у ВСЕХ групп нет ни одного непустого предмета —
+    # это ошибка формата, а не «пустое расписание».
+    filled = [
+        l for lessons in groups.values() for l in lessons
+        if l.subject.strip() and l.subject.strip().lower() not in {"окно", "-", "—"}
+    ]
+    if not filled:
+        logger.error(
+            "лист %s: все пары пустые/«окно» у групп %s — проверь структуру файла",
+            sheet_name, list(groups.keys()),
+        )
+        raise ParseError(
+            "лист %s: не найдено ни одной заполненной пары у групп %s"
+            % (sheet_name, ", ".join(groups.keys()))
+        )
+
+    return groups
+
+
 # ------------------------------------------------------ чтение одной группы ---
 
 
@@ -486,7 +622,12 @@ def _parse_sheet(df: pd.DataFrame, cfg: ParserConfig) -> dict[str, list[Lesson]]
 
 
 def parse_schedule(content: bytes, cfg: ParserConfig) -> dict[str, list[Lesson]]:
-    """Парсит xlsx. Возвращает {группа: [Lesson, ...]}."""
+    """Парсит xlsx. Возвращает {группа: [Lesson, ...]}.
+
+    Основной путь — якорный парсинг по координатам названий групп с
+    разворотом объединённых ячеек (_parse_sheet_by_groups). Если он не смог
+    разобрать лист, пробуем универсальный _parse_sheet.
+    """
     try:
         excel = pd.ExcelFile(io.BytesIO(content), engine="openpyxl")
     except Exception as exc:
@@ -495,14 +636,26 @@ def parse_schedule(content: bytes, cfg: ParserConfig) -> dict[str, list[Lesson]]
     groups: dict[str, list[Lesson]] = {}
     errors: list[str] = []
     for sheet_name in excel.sheet_names:
+        sheet_groups: dict[str, list[Lesson]] = {}
+        # 1) основной путь: сетка с развёрнутыми merged-ячейками
         try:
-            df = pd.read_excel(excel, sheet_name=sheet_name, header=None, dtype=object)
-            sheet_groups = _parse_sheet(df, cfg)
-            for g, lessons in sheet_groups.items():
-                groups.setdefault(g, []).extend(lessons)
+            df_full = _read_sheet_grid(content, sheet_name)
+            sheet_groups = _parse_sheet_by_groups(df_full, cfg, content, sheet_name)
         except Exception as exc:
-            errors.append(f"{sheet_name}: {exc}")
-            logger.warning("лист %s не распарсился: %s", sheet_name, exc)
+            errors.append(f"{sheet_name} (grid): {exc}")
+            logger.warning("лист %s (grid) не распарсился: %s", sheet_name, exc)
+        # 2) резервный путь: обычное чтение pandas + универсальный разбор
+        if not sheet_groups:
+            try:
+                df_plain = pd.read_excel(
+                    excel, sheet_name=sheet_name, header=None, dtype=object
+                )
+                sheet_groups = _parse_sheet(df_plain, cfg)
+            except Exception as exc:
+                errors.append(f"{sheet_name} (plain): {exc}")
+                logger.warning("лист %s (plain) не распарсился: %s", sheet_name, exc)
+        for g, lessons in sheet_groups.items():
+            groups.setdefault(g, []).extend(lessons)
 
     if not groups:
         raise ParseError("ни один лист не удалось распарсить: " + "; ".join(errors))
